@@ -599,6 +599,7 @@ int gpio_Clocked_Poll_Monitor(int clkAddr, int portAddr) {
         }
         gettimeofday(&tv, NULL);
         lseek(fd, 0, SEEK_SET);
+        lseek(portFd, 0, SEEK_SET);
         read(portFd, portBufferReader, 2);
         if (read(fd, &buffer, 2) != 2) {
             perror("read");
