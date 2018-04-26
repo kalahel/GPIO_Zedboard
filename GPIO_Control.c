@@ -47,13 +47,17 @@ int gpio_Clocked_Poll(int portAddr);
 
 int gpio_Clocked_Poll_Monitor(int clkAddr, int portAddr);
 
+int gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, useconds_t clkReadRate, int edgeOption);
+
 int main(int argc, char *argv[]) {
 
 
     int clkIn = 32, dataIn = 33;
+    char bufferReader[9];
     gpio_SetDataDirection(clkIn, GPIO_IN);
     gpio_SetDataDirection(dataIn, GPIO_IN);
-    gpio_Clocked_Poll_Monitor(clkIn, dataIn);
+    gpio_Read_Clocked_Poll(dataIn, clkIn, bufferReader, 9, 10000, EDGE_RISING);
+    printf("String read : %s\r\n", bufferReader);
     gpio_Unexport(clkIn);
     gpio_Unexport(dataIn);
 
@@ -554,6 +558,13 @@ int gpio_Clocked_Poll(int portAddr) {
     return 0;
 }
 
+/**
+ * Monitor a pin and read it's content each rising edge on the clk pin
+ *
+ * @param clkAddr Address of the clock
+ * @param portAddr Address of the port to monitor
+ * @return will not return, infinite loop
+ */
 int gpio_Clocked_Poll_Monitor(int clkAddr, int portAddr) {
 
     char clkValuePath[60], edgePath[60], portValuePath[60];
@@ -614,4 +625,111 @@ int gpio_Clocked_Poll_Monitor(int clkAddr, int portAddr) {
     close(fd);
     close(portFd);
     return 0;
+}
+
+// TODO add timeOUT
+/**
+ * Wait for an specified edge on the clock port to fill the buffer with data read
+ * Will return only after the buffer is filled
+ * Discard the first character
+ * Read count - 1 character
+ *
+ * @param portAddr
+ * @param clkAddr
+ * @param buf Buffer that will be filled
+ * @param count Size of the buffer in character
+ * @param clkReadRate
+ * @param edgeOption EDGE_RISING / EDGE_FALLING / EDGE_BOTH
+ * @return The number of character read (should be count - 1)
+ */
+int
+gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, useconds_t clkReadRate, int edgeOption) {
+
+    if (edgeOption != EDGE_BOTH && edgeOption != EDGE_FALLING && edgeOption != EDGE_RISING) {
+        perror("edgeOption invalid parameter\r\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char clkValuePath[60], edgePath[60], portValuePath[60];
+    snprintf(clkValuePath, sizeof(clkValuePath), "%s%d%s", GPIO_PATH, clkAddr + LINUX_OFFSET, GPIO_VALUE);
+    snprintf(edgePath, sizeof(edgePath), "%s%d%s", GPIO_PATH, clkAddr + LINUX_OFFSET, GPIO_EDGE);
+    snprintf(portValuePath, sizeof(portValuePath), "%s%d%s", GPIO_PATH, portAddr + LINUX_OFFSET, GPIO_VALUE);
+
+    int fd;
+    struct pollfd fds;
+    char buffer[2], portBufferReader[2];
+
+    int edgeFd = open(edgePath, O_WRONLY);
+    if (edgeFd < 0) {
+        perror("Opening edge failed");
+        exit(EXIT_FAILURE);
+    }
+    if (edgeOption == EDGE_RISING) {
+        if (write(edgeFd, "rising", strlen("rising")) < 0) {
+            perror("Writing edge failed");
+            exit(EXIT_FAILURE);
+        }
+    } else if (edgeOption == EDGE_FALLING) {
+        if (write(edgeFd, "falling", strlen("falling")) < 0) {
+            perror("Writing edge failed");
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        if (write(edgeFd, "both", strlen("both")) < 0) {
+            perror("Writing edge failed");
+            exit(EXIT_FAILURE);
+        }
+    }
+    close(edgeFd);
+
+    int portFd = open(portValuePath, O_RDONLY);
+    if (portFd < 0) {
+        perror("Opening monitored port failed");
+        exit(EXIT_FAILURE);
+    }
+
+
+    if ((fd = open(clkValuePath, O_RDONLY)) < 0) {
+        perror("Opening value path failed");
+        exit(EXIT_FAILURE);
+    }
+    size_t index = 0;
+
+    // read it a first time
+    fds.fd = fd;
+    fds.events = POLLPRI;
+    if (poll(&fds, 1, -1) < 0) {
+        perror("poll");
+        exit(EXIT_FAILURE);
+    }
+    lseek(fd, 0, SEEK_SET);
+    if (read(fd, &buffer, 2) != 2) {
+        perror("read");
+        exit(EXIT_FAILURE);
+    }
+    buffer[1] = '\0';
+
+    // Actual reading loop
+    for (index = 0; index < count - 1; index++) {
+        fds.fd = fd;
+        fds.events = POLLPRI;
+        if (poll(&fds, 1, -1) < 0) {
+            perror("poll");
+            break;
+        }
+        lseek(fd, 0, SEEK_SET);
+        lseek(portFd, 0, SEEK_SET);
+        read(portFd, portBufferReader, 2);
+        if (read(fd, &buffer, 2) != 2) {
+            perror("read");
+            break;
+        }
+        buffer[1] = '\0';
+        portBufferReader[1] = '\0';
+        buf[index] = portBufferReader[0];
+    }
+    close(fd);
+    close(portFd);
+    buf[index] = '\0';
+    return index;
 }
