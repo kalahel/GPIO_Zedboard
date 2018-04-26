@@ -36,6 +36,10 @@ int gpio_Write_Range(int firstPortAddr, int lastPortAddr, int valueMask[]);
 
 int gpio_Read(int portAddr, void *buf, size_t count);
 
+int gpio_Open(int portAddr, int flags);
+
+int gpio_Set_Edge(int clkAddr, int edgeOption);
+
 int gpio_Clocked_Read(int portAddr, int clkAddr, char *buf, size_t count, char *edgeOption, size_t edgeOptionSize);
 
 int
@@ -49,17 +53,28 @@ int gpio_Clocked_Poll_Monitor(int clkAddr, int portAddr);
 
 int gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, useconds_t clkReadRate, int edgeOption);
 
+int gpio_Write_Clocked(int portAddr, int clkAddr, char buf[], size_t count, useconds_t writeRate);
+
+int writer();
+
+int reader();
+
+int reader_fast();
+
 int main(int argc, char *argv[]) {
 
 
-    int clkIn = 32, dataIn = 33;
-    char bufferReader[9];
-    gpio_SetDataDirection(clkIn, GPIO_IN);
-    gpio_SetDataDirection(dataIn, GPIO_IN);
-    gpio_Read_Clocked_Poll(dataIn, clkIn, bufferReader, 9, 10000, EDGE_RISING);
-    printf("String read : %s\r\n", bufferReader);
-    gpio_Unexport(clkIn);
-    gpio_Unexport(dataIn);
+    /* int clkIn = 32, dataIn = 33;
+     char bufferReader[9];
+     gpio_SetDataDirection(clkIn, GPIO_IN);
+     gpio_SetDataDirection(dataIn, GPIO_IN);
+     gpio_Read_Clocked_Poll(dataIn, clkIn, bufferReader, 9, 10000, EDGE_RISING);
+     printf("String read : %s\r\n", bufferReader);
+     gpio_Unexport(clkIn);
+     gpio_Unexport(dataIn);*/
+
+    // writer();
+    reader_fast();
 
     return EXIT_SUCCESS;
 }
@@ -627,6 +642,60 @@ int gpio_Clocked_Poll_Monitor(int clkAddr, int portAddr) {
     return 0;
 }
 
+/**
+ * Set the desired edge in the corresponding pseudo file of a clock
+ * @param clkAddr Address of the clock
+ * @param edgeOption EDGE_RISING / EDGE_FALLING / EDGE_BOTH
+ * @return 0 in case of success
+ */
+int gpio_Set_Edge(int clkAddr, int edgeOption) {
+    if (edgeOption != EDGE_BOTH && edgeOption != EDGE_FALLING && edgeOption != EDGE_RISING) {
+        perror("edgeOption invalid parameter\r\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char edgePath[60];
+    snprintf(edgePath, sizeof(edgePath), "%s%d%s", GPIO_PATH, clkAddr + LINUX_OFFSET, GPIO_EDGE);
+
+    int edgeFd = open(edgePath, O_WRONLY);
+    if (edgeFd < 0) {
+        perror("Opening edge failed");
+        exit(EXIT_FAILURE);
+    }
+    if (edgeOption == EDGE_RISING) {
+        if (write(edgeFd, "rising", strlen("rising")) < 0) {
+            perror("Writing edge failed");
+            exit(EXIT_FAILURE);
+        }
+    } else if (edgeOption == EDGE_FALLING) {
+        if (write(edgeFd, "falling", strlen("falling")) < 0) {
+            perror("Writing edge failed");
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        if (write(edgeFd, "both", strlen("both")) < 0) {
+            perror("Writing edge failed");
+            exit(EXIT_FAILURE);
+        }
+    }
+    close(edgeFd);
+    return 0;
+}
+
+/**
+ * Return a file descriptor for the opened pseudo file corresponding to the value of the port
+ *
+ * @param portAddr Port to open
+ * @param flags Flag passed to the open() function
+ * @return The file descriptor
+ */
+int gpio_Open(int portAddr, int flags) {
+    char portPath[60];
+    snprintf(portPath, sizeof(portPath), "%s%d%s", GPIO_PATH, portAddr + LINUX_OFFSET, GPIO_VALUE);
+    int edgeFd = open(portPath, flags);
+    return edgeFd;
+}
+
 // TODO add timeOUT
 /**
  * Wait for an specified edge on the clock port to fill the buffer with data read
@@ -732,4 +801,207 @@ gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, usec
     close(portFd);
     buf[index] = '\0';
     return index;
+}
+
+/**
+ * Work the same way as gpio_Read_Clocked_Poll but this time without openging or closing pseudos files
+ * Thus making it faser
+ * @param portFd File descriptor of the port to monitor
+ * @param clkFd File descriptor of the clock
+ * @param buf Buffer that will be filled
+ * @param count Size of the buffer in character
+ * @return The number of character read (should be count - 1)
+ */
+size_t
+gpio_Read_Clocked_Poll_Fast(int portFd, int clkFd, char buf[], size_t count) {
+
+    struct pollfd fds;
+    char buffer[2], portBufferReader[2];
+    size_t index = 0;
+
+    // reads it a first time
+    fds.fd = clkFd;
+    fds.events = POLLPRI;
+    if (poll(&fds, 1, -1) < 0) {
+        perror("poll");
+        exit(EXIT_FAILURE);
+    }
+    lseek(clkFd, 0, SEEK_SET);
+    if (read(clkFd, &buffer, 2) != 2) {
+        perror("read");
+        exit(EXIT_FAILURE);
+    }
+    buffer[1] = '\0';
+
+    // Actual reading loop
+    for (index = 0; index < count - 1; index++) {
+        fds.fd = clkFd;
+        fds.events = POLLPRI;
+        if (poll(&fds, 1, -1) < 0) {
+            perror("poll");
+            break;
+        }
+        lseek(clkFd, 0, SEEK_SET);
+        lseek(portFd, 0, SEEK_SET);
+        read(portFd, portBufferReader, 2);
+        if (read(clkFd, &buffer, 2) != 2) {
+            perror("read");
+            break;
+        }
+        buffer[1] = '\0';
+        portBufferReader[1] = '\0';
+        buf[index] = portBufferReader[0];
+    }
+
+    buf[index] = '\0';
+    return index;
+}
+
+/**
+ * Write an entire buffer to a pin synchronised to a clock
+ * Will send the data on a rising edge
+ *
+ * @param portAddr
+ * @param clkAddr
+ * @param buf
+ * @param count
+ * @param writeRate
+ * @return
+ */
+// TODO add edge options
+int gpio_Write_Clocked(int portAddr, int clkAddr, char buf[], size_t count, useconds_t writeRate) {
+
+
+    char stringValue[2];
+    char portPath[80];
+    char clkPath[60];
+
+    snprintf(portPath, sizeof(portPath), "%s%d%s", GPIO_PATH, portAddr + LINUX_OFFSET, GPIO_VALUE);
+    snprintf(clkPath, sizeof(clkPath), "%s%d%s", GPIO_PATH, clkAddr + LINUX_OFFSET, GPIO_VALUE);
+
+    int portFd = open(portPath, O_WRONLY);
+    if (portFd == -1)
+        perror("Opening gpio/gpio*Port*/value failed\r\n");
+
+    int clkFd = open(clkPath, O_WRONLY);
+    if (clkFd == -1)
+        perror("Opening gpio/gpio*CLK*/value failed\r\n");
+
+    size_t index;
+    for (index = 0; index < count - 1; index++) {
+        //snprintf(stringValue, sizeof(stringValue), "%d", buf[index]);
+        stringValue[0] = buf[index];
+        stringValue[1] = '\0';
+        lseek(clkFd, 0, SEEK_SET);
+        if (write(clkFd, "0", strlen("0")) < 0) {
+            perror("Writing to gpio/gpio*Port*/value failed\r\n");
+            exit(EXIT_FAILURE);
+        }
+
+        if (writeRate == 1)
+            usleep(1);
+        else
+            usleep(writeRate / 2);
+        lseek(portFd, 0, SEEK_SET);
+        lseek(clkFd, 0, SEEK_SET);
+
+        printf("I will write : %s\r\n", stringValue);
+
+        if (write(portFd, stringValue, sizeof(stringValue)) < 0) {
+            perror("Writing to gpio/gpio*Port*/value failed\r\n");
+            exit(EXIT_FAILURE);
+        }
+
+        if (write(clkFd, "1", strlen("0")) < 0) {
+            perror("Writing to gpio/gpio*Port*/value failed\r\n");
+            exit(EXIT_FAILURE);
+        }
+
+        if (writeRate == 1)
+            usleep(1);
+        else
+            usleep(writeRate / 2);
+    }
+
+    printf("Buffer wrote : %s\r\n", buf);
+    close(portFd);
+    close(clkFd);
+    return 0;
+}
+
+int writer() {
+    int clkOut = 24, dataOut = 25;
+    useconds_t delay = 100000;
+
+    char bufferWriter0[9] = "11111111";
+    char bufferWriter1[9] = "11110000";
+    char bufferWriter2[9] = "00001111";
+    char bufferWriter3[9] = "00000000";
+
+    gpio_SetDataDirection(clkOut, GPIO_OUT);
+    gpio_SetDataDirection(dataOut, GPIO_OUT);
+
+    int index;
+    for (index = 0; index < 5; index++) {
+        gpio_Write_Clocked(dataOut, clkOut, bufferWriter0, 9, delay);
+        gpio_Write_Clocked(dataOut, clkOut, bufferWriter1, 9, delay);
+        gpio_Write_Clocked(dataOut, clkOut, bufferWriter2, 9, delay);
+        gpio_Write_Clocked(dataOut, clkOut, bufferWriter3, 9, delay);
+        delay = delay / 10;
+        printf("Index : %d, Actual Delay :%d\r\n", index, delay);
+    }
+
+
+    gpio_Unexport(clkOut);
+    gpio_Unexport(dataOut);
+}
+
+int reader() {
+
+    int clkIn = 32, dataIn = 33;
+    char bufferReader[20][9];
+    gpio_SetDataDirection(clkIn, GPIO_IN);
+    gpio_SetDataDirection(dataIn, GPIO_IN);
+
+    for (int index = 0; index < 20; index++) {
+        gpio_Read_Clocked_Poll(dataIn, clkIn, bufferReader[index], 9, 10000, EDGE_RISING);
+    }
+    for (int i = 0; i < 20; i++) {
+        printf("index : %d, Data Read : %s\r\n", i, bufferReader[i]);
+    }
+    gpio_Unexport(clkIn);
+    gpio_Unexport(dataIn);
+}
+
+int reader_fast() {
+
+    int clkIn = 32, dataIn = 33;
+    char bufferReader[20][9];
+
+    gpio_SetDataDirection(clkIn, GPIO_IN);
+    gpio_SetDataDirection(dataIn, GPIO_IN);
+    gpio_Set_Edge(clkIn, EDGE_RISING);
+
+    int clkFd = gpio_Open(clkIn, O_RDONLY);
+    if(clkFd < 0){
+        perror("Port opening impossible");
+        exit(EXIT_FAILURE);
+    }
+    int dataFd = gpio_Open(dataIn, O_RDONLY);
+    if(dataFd < 0){
+        perror("Port opening impossible");
+        exit(EXIT_FAILURE);
+    }
+
+    for (int index = 0; index < 20; index++) {
+        gpio_Read_Clocked_Poll_Fast(dataFd, clkFd, bufferReader[index], 9);
+    }
+    for (int i = 0; i < 20; i++) {
+        printf("index : %d, Data Read : %s\r\n", i, bufferReader[i]);
+    }
+    close(clkFd);
+    close(dataFd);
+
+    gpio_Unexport(clkIn);
+    gpio_Unexport(dataIn);
 }
