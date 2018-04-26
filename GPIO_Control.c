@@ -728,7 +728,7 @@ gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, usec
     struct pollfd fds;
     char buffer[2], portBufferReader[2];
 
-    int edgeFd = open(edgePath, O_WRONLY);
+    int edgeFd = open(edgePath, O_WRONLY | O_SYNC);
     if (edgeFd < 0) {
         perror("Opening edge failed");
         exit(EXIT_FAILURE);
@@ -751,14 +751,14 @@ gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, usec
     }
     close(edgeFd);
 
-    int portFd = open(portValuePath, O_RDONLY);
+    int portFd = open(portValuePath, O_RDONLY | O_SYNC);
     if (portFd < 0) {
         perror("Opening monitored port failed");
         exit(EXIT_FAILURE);
     }
 
 
-    if ((fd = open(clkValuePath, O_RDONLY)) < 0) {
+    if ((fd = open(clkValuePath, O_RDONLY | O_SYNC)) < 0) {
         perror("Opening value path failed");
         exit(EXIT_FAILURE);
     }
