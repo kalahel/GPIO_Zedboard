@@ -57,9 +57,12 @@ int gpio_Write_Clocked(int portAddr, int clkAddr, char buf[], size_t count, usec
 
 int writer();
 
+int writer_Time_Tester();
+
 int reader();
 
 int reader_fast();
+
 
 int main(int argc, char *argv[]) {
 
@@ -73,8 +76,8 @@ int main(int argc, char *argv[]) {
      gpio_Unexport(clkIn);
      gpio_Unexport(dataIn);*/
 
-    // writer();
-    reader_fast();
+    writer_Time_Tester();
+    //reader_fast();
 
     return EXIT_SUCCESS;
 }
@@ -905,7 +908,7 @@ int gpio_Write_Clocked(int portAddr, int clkAddr, char buf[], size_t count, usec
         lseek(portFd, 0, SEEK_SET);
         lseek(clkFd, 0, SEEK_SET);
 
-        printf("I will write : %s\r\n", stringValue);
+        //printf("I will write : %s\r\n", stringValue);
 
         if (write(portFd, stringValue, sizeof(stringValue)) < 0) {
             perror("Writing to gpio/gpio*Port*/value failed\r\n");
@@ -923,7 +926,7 @@ int gpio_Write_Clocked(int portAddr, int clkAddr, char buf[], size_t count, usec
             usleep(writeRate / 2);
     }
 
-    printf("Buffer wrote : %s\r\n", buf);
+    //printf("Buffer wrote : %s\r\n", buf);
     close(portFd);
     close(clkFd);
     return 0;
@@ -941,6 +944,9 @@ int writer() {
     gpio_SetDataDirection(clkOut, GPIO_OUT);
     gpio_SetDataDirection(dataOut, GPIO_OUT);
 
+    struct timeval tv, tv2;
+
+
     int index;
     for (index = 0; index < 5; index++) {
         gpio_Write_Clocked(dataOut, clkOut, bufferWriter0, 9, delay);
@@ -955,6 +961,46 @@ int writer() {
     gpio_Unexport(clkOut);
     gpio_Unexport(dataOut);
 }
+
+int writer_Time_Tester() {
+    int clkOut = 24, dataOut = 25;
+    double sum = 0;
+    double averageResult, averageBitRate;
+    int nMax = 100000;
+    useconds_t delay = 0;
+
+    char bufferWriter0[9] = "11111111";
+    char bufferWriter1[9] = "11110000";
+    char bufferWriter2[9] = "00001111";
+    char bufferWriter3[9] = "00000000";
+
+    gpio_SetDataDirection(clkOut, GPIO_OUT);
+    gpio_SetDataDirection(dataOut, GPIO_OUT);
+
+    struct timeval tv, tv2;
+
+
+    int index;
+    for (index = 0; index < nMax; index++) {
+        gettimeofday(&tv, NULL);
+        gpio_Write_Clocked(dataOut, clkOut, bufferWriter0, 9, delay);
+        gpio_Write_Clocked(dataOut, clkOut, bufferWriter1, 9, delay);
+        gpio_Write_Clocked(dataOut, clkOut, bufferWriter2, 9, delay);
+        gpio_Write_Clocked(dataOut, clkOut, bufferWriter3, 9, delay);
+        gettimeofday(&tv2, NULL);
+        delay = delay / 10;
+        //printf("Index : %d, Actual Delay :%d\r\n", index, delay);
+        sum += tv2.tv_usec - tv.tv_usec;
+    }
+    averageResult = sum / nMax;
+    printf("Average difference for 4 arrays of 8 bits: %lf\r\n", averageResult);
+    averageBitRate = averageResult / (8 * 4);
+    printf("Average bit writing rate : %lf\r\n", averageBitRate);
+
+    gpio_Unexport(clkOut);
+    gpio_Unexport(dataOut);
+}
+
 
 int reader() {
 
@@ -983,12 +1029,12 @@ int reader_fast() {
     gpio_Set_Edge(clkIn, EDGE_RISING);
 
     int clkFd = gpio_Open(clkIn, O_RDONLY);
-    if(clkFd < 0){
+    if (clkFd < 0) {
         perror("Port opening impossible");
         exit(EXIT_FAILURE);
     }
     int dataFd = gpio_Open(dataIn, O_RDONLY);
-    if(dataFd < 0){
+    if (dataFd < 0) {
         perror("Port opening impossible");
         exit(EXIT_FAILURE);
     }
