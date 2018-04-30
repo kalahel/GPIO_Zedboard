@@ -61,23 +61,20 @@ int writer_Time_Tester();
 
 int reader();
 
-int reader_fast();
+int reader_Fast();
 
+int gpio_Write_Fast(int fd, char value);
+
+void gpio_Write_Fast_Tester(int nbTest, int internalRepetition);
 
 int main(int argc, char *argv[]) {
 
 
-    /* int clkIn = 32, dataIn = 33;
-     char bufferReader[9];
-     gpio_SetDataDirection(clkIn, GPIO_IN);
-     gpio_SetDataDirection(dataIn, GPIO_IN);
-     gpio_Read_Clocked_Poll(dataIn, clkIn, bufferReader, 9, 10000, EDGE_RISING);
-     printf("String read : %s\r\n", bufferReader);
-     gpio_Unexport(clkIn);
-     gpio_Unexport(dataIn);*/
 
-    writer_Time_Tester();
+    //writer_Time_Tester();
     //reader_fast();
+
+    gpio_Write_Fast_Tester(10, 10000);
 
     return EXIT_SUCCESS;
 }
@@ -1019,7 +1016,7 @@ int reader() {
     gpio_Unexport(dataIn);
 }
 
-int reader_fast() {
+int reader_Fast() {
 
     int clkIn = 32, dataIn = 33;
     char bufferReader[20][9];
@@ -1051,3 +1048,71 @@ int reader_fast() {
     gpio_Unexport(clkIn);
     gpio_Unexport(dataIn);
 }
+
+/**
+ * Write a value directly on the pseudo file without opening it again
+ * @param fd File descriptor, pseudo file opened
+ * @param value Value to write '0' or '1'
+ * @return 0 in case of success, -1 in case of failure
+ */
+int gpio_Write_Fast(int fd, char value) {
+
+    if (value != '0' && value != '1') {
+        perror("Writing failed, value must be 1 or 0");
+        return -1;
+    }
+    char bufferWriter[2];
+    bufferWriter[0] = value;
+    bufferWriter[1] = '\0';
+    write(fd, bufferWriter, 2);
+    return 0;
+}
+
+/**
+ * Will test the function gpio_Write_Fast by measuring it's average write frequency.
+ * Port Ja1 is used
+ * @param nbTest
+ * @param internalRepetition
+ */
+void gpio_Write_Fast_Tester(int nbTest, int internalRepetition) {
+    int dataOut = 24;
+
+    gpio_SetDataDirection(24, GPIO_OUT);
+    int fd = gpio_Open(24, O_WRONLY);
+    usleep(10);
+    int index = 0;
+
+    struct timeval tv, tv2;
+    long testResult[nbTest];
+    long testResultUS[nbTest];
+
+    for (int j = 0; j < nbTest; j++) {
+        gettimeofday(&tv, NULL);
+        // Insert function to test here
+        for (index = 0; index < internalRepetition; index++) {
+            gpio_Write_Fast(fd, '0');
+            gpio_Write_Fast(fd, '1');
+        }
+        gettimeofday(&tv2, NULL);
+
+        testResult[j] = (int) (tv2.tv_sec * 1000000 + tv2.tv_usec) - (int) (tv.tv_sec * 1000000 + tv.tv_usec);
+    }
+    long result = 0;
+    for (int k = 1; k < nbTest - 1; k++) {
+        result += testResult[k];
+    }
+
+    double averageTimeElapsed = ((double) result) / (nbTest - 2);
+
+    printf("Average time for internal function measured is : %lf\r\n us", averageTimeElapsed);
+
+    double period = averageTimeElapsed / internalRepetition;
+    printf("Average period is : %lf us\r\n", period);
+
+    double frequency = ((double) 1.00 / period) * 1000000;
+    printf("Average frequency is : %lf Hz\r\n", frequency);
+
+    close(fd);
+    gpio_Unexport(24);
+}
+
