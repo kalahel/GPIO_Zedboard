@@ -12,7 +12,7 @@
 
 #define GPIO_BASE_ADDR 0xE000A000
 #define GPIO_END_ADDR 0xE000AFFF
-#define GPIO_MAP_SIZE 0x10000
+#define GPIO_MAP_SIZE (GPIO_END_ADDR - GPIO_BASE_ADDR)
 #define GPIO_SIZE (GPIO_END_ADDR - GPIO_BASE_ADDR)
 #define GPIO_PATH "/sys/class/gpio/gpio"
 #define GPIO_PATH_EXPORT "/sys/class/gpio/export"
@@ -27,29 +27,46 @@
 #define EDGE_FALLING 1
 #define EDGE_BOTH 2
 
+void memory_Visualizer();
 
 int main(int argc, char *argv[]) {
+
+    memory_Visualizer();
+    return 0;
+}
+
+/**
+ * Read the content from the GPIO Base address to its End address
+ * Byte by byte
+ * It goes from 0xE000A000 to 0xE000AFFF so 16 reading are necessary
+ *
+ */
+void memory_Visualizer() {
     volatile void *gpio_addr;
     volatile unsigned int *gpio_ptr;
     int fd = open("/dev/mem", O_RDWR);
-    int led = 7 + LINUX_OFFSET;
-    // mmap the GPIO device into user space
 
-    gpio_ptr = mmap(NULL, GPIO_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (gpio_ptr == MAP_FAILED) {
-        printf("Mmap call failure.\n");
-        return -1;
-    }
-
-    int gpioContent, gpioContentDiff;
+    printf("Mapped size : %d or %#010x\n", GPIO_MAP_SIZE, GPIO_MAP_SIZE);
+    volatile unsigned char gpioContent;
     int i;
-    for (i = 0; i < 20; i++) {
-        gpioContent = *gpio_ptr;
+    while (1) {
+
+
+        // Byte decomposition from 0x000 to 0xFFF to print all memory content
+        for (i = 0; i < 16; i++) {
+            gpioContent = *gpio_ptr;
+            // mmap the GPIO device into user space and Read a Byte
+//            gpio_ptr = mmap(NULL, sizeof(char), PROT_READ | PROT_WRITE, MAP_SHARED, fd, (i * 0x100));
+            gpio_ptr = mmap(NULL, 1, PROT_READ | PROT_WRITE, MAP_SHARED, fd, i);
+            if (gpio_ptr == MAP_FAILED) {
+                printf("Mmap call failure.\n");
+                exit(EXIT_FAILURE);
+            }
+
+            printf("L%d : %d\r\n", i, gpioContent);
+        }
+        printf(" \r\n");
         sleep(1);
-        gpioContentDiff = *gpio_ptr;
-        printf("Difference from a second ago : %d ", gpioContent - gpioContentDiff);
     }
 
-
-    return 0;
 }
