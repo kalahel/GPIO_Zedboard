@@ -3,4 +3,4 @@ project(GPIO_Zedboard C)
 
 set(CMAKE_C_STANDARD 99)
 
-add_executable(GPIO_Zedboard GPIO_Control.c)
+add_executable(GPIO_Zedboard GPIO_Custom_Utils.c)
