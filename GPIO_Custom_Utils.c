@@ -81,22 +81,50 @@ CustomTransceiver gpio_Open_Transceiver(CustomTransceiver transceiver, int flags
 
 int gpio_Write_Rising_half_Transceiver(CustomTransceiver transceiver, char data[], int dataSize);
 
+int gpio_Write_Falling_half_Transceiver(CustomTransceiver transceiver, char data[], int dataSize);
+
+int gpio_Write_Rising_Transceiver(CustomTransceiver transceiver, char data[], int dataSize);
+
+int gpio_Write_Falling_Transceiver(CustomTransceiver transceiver, char data[], int dataSize);
+
 void transceiver_Print_Info(CustomTransceiver transceiver);
 
+int gpio_Write_Both(CustomTransceiver transceiver, char dataFirst[], char dataSecond[], int dataSize);
+
+void transceiver_Write_Tester(int nbTest, int internalRepetition, CustomTransceiver transceiver);
 
 int main(int argc, char *argv[]) {
 
 
+//    //gpio_Write_Fast_Tester(10, 10000);
+//    int used_pins_Port[] = {7, 8, 9, 10};
+//    CustomTransceiver transceiver;
+//    transceiver.clk_Port = 24;
+//    transceiver.pins_Ports = used_pins_Port;
+//    transceiver.nb_Data_Pins = 4;
+//    if (gpio_Export_Transceiver(transceiver, GPIO_OUT) < 0) {
+//        //exit(EXIT_FAILURE);
+//    }
+//    usleep(100);
+//
+//    transceiver = gpio_Open_Transceiver(transceiver, O_WRONLY);
+//
+//
+//    char data[] = {'1', '0', '1', '0'};
+//    //gpio_Write_Rising_half_Transceiver(transceiver, data, 4);
+//    transceiver_Print_Info(transceiver);
+//    if (gpio_Close_Transceiver(transceiver) < 0) {
+//        // exit(EXIT_FAILURE);
+//    }
+//    if (gpio_Unexport_Transceiver(transceiver) < 0) {
+//        // exit(EXIT_FAILURE);
+//    }
 
-    //writer_Time_Tester();
-    //reader_fast();
-
-    //gpio_Write_Fast_Tester(10, 10000);
-    int used_pins_Port[] = {7, 8, 9, 10};
+    int used_pins_Port[] = {25, 26, 27, 28, 29, 39, 31};
     CustomTransceiver transceiver;
     transceiver.clk_Port = 24;
     transceiver.pins_Ports = used_pins_Port;
-    transceiver.nb_Data_Pins = 4;
+    transceiver.nb_Data_Pins = 7;
     if (gpio_Export_Transceiver(transceiver, GPIO_OUT) < 0) {
         //exit(EXIT_FAILURE);
     }
@@ -104,10 +132,11 @@ int main(int argc, char *argv[]) {
 
     transceiver = gpio_Open_Transceiver(transceiver, O_WRONLY);
 
+    usleep(10);
 
-    char data[] = {'1', '0', '1', '0'};
-    //gpio_Write_Rising_half_Transceiver(transceiver, data, 4);
-    transceiver_Print_Info(transceiver);
+    transceiver_Write_Tester(10, 10000, transceiver);
+
+
     if (gpio_Close_Transceiver(transceiver) < 0) {
         // exit(EXIT_FAILURE);
     }
@@ -873,6 +902,7 @@ CustomTransceiver gpio_Open_Transceiver(CustomTransceiver transceiver, int flags
     }
     return transceiver;
 }
+
 /**
  * Close all the files descriptor opened for the transceiver
  * Including the clock file descriptor
@@ -907,12 +937,10 @@ int gpio_Close_Transceiver(CustomTransceiver transceiver) {
  */
 int gpio_Write_Rising_half_Transceiver(CustomTransceiver transceiver, char data[], int dataSize) {
     int i, flag;
-
     if (dataSize != transceiver.nb_Data_Pins) {
         perror("Data size mismatch transceiver port number");
         return -1;
     }
-
     // Write data
     for (i = 0; i < transceiver.nb_Data_Pins; i++) {
         flag = gpio_Write_Fast(*(transceiver.pins_Fds + i), data[i]);
@@ -927,7 +955,120 @@ int gpio_Write_Rising_half_Transceiver(CustomTransceiver transceiver, char data[
         perror("Transceiver writing clock failed");
         return -1;
     }
+    return 0;
+}
 
+/**
+ * Write port by port a data, then lower the clock
+ * Data array must be same number as the data pin numbers
+ * @param transceiver Transceiver containing all the information about clock and port
+ * @param data Array of bit to transmit
+ * @param dataSize Size of the array of data
+ * @return 0 in case of success, -1 in case of failure
+ */
+int gpio_Write_Falling_half_Transceiver(CustomTransceiver transceiver, char data[], int dataSize) {
+    int i, flag;
+    if (dataSize != transceiver.nb_Data_Pins) {
+        perror("Data size mismatch transceiver port number");
+        return -1;
+    }
+    // Write data
+    for (i = 0; i < transceiver.nb_Data_Pins; i++) {
+        flag = gpio_Write_Fast(*(transceiver.pins_Fds + i), data[i]);
+        if (flag < 0) {
+            perror("Transceiver Writing data failed");
+            return -1;
+        }
+    }
+    // Write Clk low
+    flag = gpio_Write_Fast(transceiver.clk_fd, '0');
+    if (flag < 0) {
+        perror("Transceiver writing clock failed");
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * Writing data on both edge of the clock
+ *
+ * @param transceiver Transceiver containing all the information about clock and port
+ * @param dataFirst First set of data to transmit on rising edge
+ * @param dataSecond Second set of data to transmit on falling edge
+ * @param dataSize Size of the array of data
+ * @return 0 in case of success, -1 in case of failure
+ */
+int gpio_Write_Both(CustomTransceiver transceiver, char dataFirst[], char dataSecond[], int dataSize) {
+    if (dataSize != transceiver.nb_Data_Pins) {
+        perror("Data size mismatch transceiver port number");
+        return -1;
+    }
+    int flag = gpio_Write_Rising_half_Transceiver(transceiver, dataFirst, dataSize);
+    if (flag < 0) {
+        perror("Writing first part of data failed");
+        return -1;
+    }
+    flag = gpio_Write_Falling_half_Transceiver(transceiver, dataSecond, dataSize);
+    if (flag < 0) {
+        perror("Writing second part of data failed");
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * Write port by port a data, then rise the clock and lower it after
+ * Data array must be same number as the data pin numbers
+ * Complete cycle of data transmission on rising edge
+ * @param transceiver Transceiver containing all the information about clock and port
+ * @param data Array of bit to transmit
+ * @param dataSize Size of the array of data
+ * @return 0 in case of success, -1 in case of failure
+ */
+int gpio_Write_Rising_Transceiver(CustomTransceiver transceiver, char data[], int dataSize) {
+    if (dataSize != transceiver.nb_Data_Pins) {
+        perror("Data size mismatch transceiver port number");
+        return -1;
+    }
+    int flag = gpio_Write_Rising_half_Transceiver(transceiver, data, dataSize);
+    if (flag < 0) {
+        perror("Writing data failed");
+        return -1;
+    }
+    // Write Clk low
+    flag = gpio_Write_Fast(transceiver.clk_fd, '0');
+    if (flag < 0) {
+        perror("Transceiver writing clock failed");
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * Write port by port a data, then lower the clock and rise it after
+ * Data array must be same number as the data pin numbers
+ * Complete cycle of data transmission on falling edge
+ * @param transceiver Transceiver containing all the information about clock and port
+ * @param data Array of bit to transmit
+ * @param dataSize Size of the array of data
+ * @return 0 in case of success, -1 in case of failure
+ */
+int gpio_Write_Falling_Transceiver(CustomTransceiver transceiver, char data[], int dataSize) {
+    if (dataSize != transceiver.nb_Data_Pins) {
+        perror("Data size mismatch transceiver port number");
+        return -1;
+    }
+    int flag = gpio_Write_Falling_half_Transceiver(transceiver, data, dataSize);
+    if (flag < 0) {
+        perror("Writing data failed");
+        return -1;
+    }
+    // Write Clk low
+    flag = gpio_Write_Fast(transceiver.clk_fd, '1');
+    if (flag < 0) {
+        perror("Transceiver writing clock failed");
+        return -1;
+    }
     return 0;
 }
 
@@ -938,4 +1079,49 @@ void transceiver_Print_Info(CustomTransceiver transceiver) {
     for (index = 0; index < transceiver.nb_Data_Pins; index++) {
         printf("Port : %d\tFd : %d\r\n", *(transceiver.pins_Ports + index), *(transceiver.pins_Fds + index));
     }
+}
+
+/**
+ * Will test the function gpio_Write_Rising_Transceiver by measuring it's average write frequency.
+ * Will write 7 bits and its clocks in one time.
+ * Whole Pmod JA is used
+ * @param nbTest
+ * @param internalRepetition
+ */
+void transceiver_Write_Tester(int nbTest, int internalRepetition, CustomTransceiver transceiver) {
+    int dataSize = 7;
+    char dataToTransmit[] = {'1', '1', '1', '0', '0', '0', '0'};
+    char dataToTransmit2[] = {'0', '0', '0', '1', '1', '1', '1'};
+    int index = 0;
+    struct timeval tv, tv2;
+    long testResult[nbTest];
+    long testResultUS[nbTest];
+
+    for (int j = 0; j < nbTest; j++) {
+        gettimeofday(&tv, NULL);
+        for (index = 0; index < internalRepetition; index++) {
+            // Insert function to test here
+
+            //gpio_Write_Rising_Transceiver(transceiver, dataToTransmit, dataSize);
+            gpio_Write_Both(transceiver, dataToTransmit, dataToTransmit2, dataSize);
+        }
+        gettimeofday(&tv2, NULL);
+
+        testResult[j] = (int) (tv2.tv_sec * 1000000 + tv2.tv_usec) - (int) (tv.tv_sec * 1000000 + tv.tv_usec);
+    }
+    long result = 0;
+    for (int k = 1; k < nbTest - 1; k++) {
+        result += testResult[k];
+    }
+
+    double averageTimeElapsed = ((double) result) / (nbTest - 2);
+
+    printf("Average time for internal function measured is : %lf\r\n us", averageTimeElapsed);
+
+    double period = averageTimeElapsed / internalRepetition;
+    printf("Average period is : %lf us\r\n", period);
+
+    double frequency = ((double) 1.00 / period) * 1000000;
+    printf("Average frequency is : %lf Hz\r\n", frequency);
+
 }
