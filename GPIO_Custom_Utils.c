@@ -24,34 +24,6 @@
 #define EDGE_FALLING 1
 #define EDGE_BOTH 2
 
-int gpio_SetDataDirection(int portAddr, int mode);
-
-
-int gpio_SetDataDirection_Range(int firstPortAddr, int lastPortAddr, int mode);
-
-int gpio_Unexport(int portAddr);
-
-int gpio_Read(int portAddr, void *buf, size_t count);
-
-int gpio_Open(int portAddr, int flags);
-
-int gpio_Set_Edge(int clkAddr, int edgeOption);
-
-int gpio_Clocked_Read(int portAddr, int clkAddr, char *buf, size_t count, char *edgeOption, size_t edgeOptionSize);
-
-
-int gpio_Clocked_Poll(int portAddr);
-
-int gpio_Clocked_Poll_Monitor(int clkAddr, int portAddr);
-
-int gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, useconds_t clkReadRate, int edgeOption);
-
-
-int reader_Fast();
-
-int gpio_Write_Fast(int fd, char value);
-
-void gpio_Write_Fast_Tester(int nbTest, int internalRepetition);
 
 /**
  * Structure used for transceiver
@@ -72,6 +44,46 @@ typedef struct {
     int clk_fd;
 } CustomTransceiver;
 
+
+int gpio_SetDataDirection(int portAddr, int mode);
+
+int gpio_SetDataDirection_Range(int firstPortAddr, int lastPortAddr, int mode);
+
+int gpio_Unexport(int portAddr);
+
+int gpio_Read(int portAddr, void *buf, size_t count);
+
+int gpio_Open(int portAddr, int flags);
+
+int gpio_Close_Transceiver(CustomTransceiver transceiver);
+
+int gpio_Set_Edge(int clkAddr, int edgeOption);
+
+int gpio_Clocked_Read(int portAddr, int clkAddr, char *buf, size_t count, char *edgeOption, size_t edgeOptionSize);
+
+int gpio_Clocked_Poll(int portAddr);
+
+int gpio_Clocked_Poll_Monitor(int clkAddr, int portAddr);
+
+int gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, useconds_t clkReadRate, int edgeOption);
+
+int reader_Fast();
+
+int gpio_Write_Fast(int fd, char value);
+
+void gpio_Write_Fast_Tester(int nbTest, int internalRepetition);
+
+int gpio_Export_Transceiver(CustomTransceiver transceiver, int mode);
+
+int gpio_Unexport_Transceiver(CustomTransceiver transceiver);
+
+CustomTransceiver gpio_Open_Transceiver(CustomTransceiver transceiver, int flags);
+
+int gpio_Write_Rising_half_Transceiver(CustomTransceiver transceiver, char data[], int dataSize);
+
+void transceiver_Print_Info(CustomTransceiver transceiver);
+
+
 int main(int argc, char *argv[]) {
 
 
@@ -79,7 +91,29 @@ int main(int argc, char *argv[]) {
     //writer_Time_Tester();
     //reader_fast();
 
-    gpio_Write_Fast_Tester(10, 10000);
+    //gpio_Write_Fast_Tester(10, 10000);
+    int used_pins_Port[] = {7, 8, 9, 10};
+    CustomTransceiver transceiver;
+    transceiver.clk_Port = 24;
+    transceiver.pins_Ports = used_pins_Port;
+    transceiver.nb_Data_Pins = 4;
+    if (gpio_Export_Transceiver(transceiver, GPIO_OUT) < 0) {
+        //exit(EXIT_FAILURE);
+    }
+    usleep(100);
+
+    transceiver = gpio_Open_Transceiver(transceiver, O_WRONLY);
+
+
+    char data[] = {'1', '0', '1', '0'};
+    //gpio_Write_Rising_half_Transceiver(transceiver, data, 4);
+    transceiver_Print_Info(transceiver);
+    if (gpio_Close_Transceiver(transceiver) < 0) {
+        // exit(EXIT_FAILURE);
+    }
+    if (gpio_Unexport_Transceiver(transceiver) < 0) {
+        // exit(EXIT_FAILURE);
+    }
 
     return EXIT_SUCCESS;
 }
@@ -505,8 +539,8 @@ int gpio_Set_Edge(int clkAddr, int edgeOption) {
 int gpio_Open(int portAddr, int flags) {
     char portPath[60];
     snprintf(portPath, sizeof(portPath), "%s%d%s", GPIO_PATH, portAddr + LINUX_OFFSET, GPIO_VALUE);
-    int edgeFd = open(portPath, flags);
-    return edgeFd;
+    int portFd = open(portPath, flags);
+    return portFd;
 }
 
 // TODO add timeOUT
@@ -810,27 +844,67 @@ int gpio_Unexport_Transceiver(CustomTransceiver transceiver) {
     return 0;
 }
 
-int gpio_Open_Transceiver(CustomTransceiver transceiver, int flags) {
+/**
+ * Open all the port of the transceiver and its clock
+ * Assigning them files descriptors
+ * @param transceiver Transceiver to set up
+ * @param flags Opening flags (O_WRONLY)
+ * @return 0 in case of success, -1 in case of failure
+ */
+CustomTransceiver gpio_Open_Transceiver(CustomTransceiver transceiver, int flags) {
     int i;
+    transceiver.pins_Fds = malloc(sizeof(int) * transceiver.nb_Data_Pins);
+    if (transceiver.pins_Fds == NULL) {
+        perror("Memory allocation for port files descriptor failed");
+        exit(EXIT_FAILURE);
+    }
     for (i = 0; i < transceiver.nb_Data_Pins; i++) {
         *(transceiver.pins_Fds + i) = gpio_Open(*(transceiver.pins_Ports + i), flags);
         if (*(transceiver.pins_Fds + i) < 0) {
             perror("Transceiver opening port files descriptors failed");
+            exit(EXIT_FAILURE);
+        }
+        usleep(2);
+    }
+    transceiver.clk_fd = gpio_Open(transceiver.clk_Port, flags);
+    if (transceiver.clk_fd < 0) {
+        perror("Transceiver opening clock file descriptor failed");
+        exit(EXIT_FAILURE);
+    }
+    return transceiver;
+}
+/**
+ * Close all the files descriptor opened for the transceiver
+ * Including the clock file descriptor
+ * @param transceiver Transceiver to close
+ * @return 0 in case of success, -1 in case of failure
+ */
+int gpio_Close_Transceiver(CustomTransceiver transceiver) {
+    int i, flag;
+    for (i = 0; i < transceiver.nb_Data_Pins; i++) {
+        flag = close(*(transceiver.pins_Fds + i));
+        if (flag < 0) {
+            perror("Transceiver closing port files descriptors failed");
             return -1;
         }
         usleep(1);
     }
-    transceiver.clk_fd = gpio_Unexport(transceiver.clk_Port);
+    transceiver.clk_fd = close(transceiver.clk_fd);
     if (transceiver.clk_fd < 0) {
-        perror("Transceiver opening clock file descriptor failed");
+        perror("Transceiver closing clock file descriptor failed");
         return -1;
-
     }
-
     return 0;
 }
 
-//todo fill
+/**
+ * Write port by port a data, then rise the clock
+ * Data array must be same number as the data pin numbers
+ * @param transceiver Transceiver containing all the information about clock and port
+ * @param data Array of bit to transmit
+ * @param dataSize Size of the array of data
+ * @return 0 in case of success, -1 in case of failure
+ */
 int gpio_Write_Rising_half_Transceiver(CustomTransceiver transceiver, char data[], int dataSize) {
     int i, flag;
 
@@ -842,17 +916,26 @@ int gpio_Write_Rising_half_Transceiver(CustomTransceiver transceiver, char data[
     // Write data
     for (i = 0; i < transceiver.nb_Data_Pins; i++) {
         flag = gpio_Write_Fast(*(transceiver.pins_Fds + i), data[i]);
-        if (flag < 0){
+        if (flag < 0) {
             perror("Transceiver Writing data failed");
             return -1;
         }
     }
     // Write Clk high
     flag = gpio_Write_Fast(transceiver.clk_fd, '1');
-    if (flag < 0){
+    if (flag < 0) {
         perror("Transceiver writing clock failed");
         return -1;
     }
 
     return 0;
+}
+
+void transceiver_Print_Info(CustomTransceiver transceiver) {
+    printf("Clock port : %d\tFd : %d\r\nNumber of data pins : %d\r\n", transceiver.clk_Port, transceiver.clk_fd,
+           transceiver.nb_Data_Pins);
+    int index;
+    for (index = 0; index < transceiver.nb_Data_Pins; index++) {
+        printf("Port : %d\tFd : %d\r\n", *(transceiver.pins_Ports + index), *(transceiver.pins_Fds + index));
+    }
 }
