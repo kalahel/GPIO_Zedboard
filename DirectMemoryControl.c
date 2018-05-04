@@ -12,61 +12,258 @@
 
 #define GPIO_BASE_ADDR 0xE000A000
 #define GPIO_END_ADDR 0xE000AFFF
-#define GPIO_MAP_SIZE (GPIO_END_ADDR - GPIO_BASE_ADDR)
-#define GPIO_SIZE (GPIO_END_ADDR - GPIO_BASE_ADDR)
-#define GPIO_PATH "/sys/class/gpio/gpio"
-#define GPIO_PATH_EXPORT "/sys/class/gpio/export"
-#define GPIO_PATH_UNEXPORT "/sys/class/gpio/unexport"
-#define GPIO_VALUE "/value"
-#define GPIO_EDGE "/edge"
-#define GPIO_DIRECTION "/direction"
-#define LINUX_OFFSET 54
+#define GPIO_MAP_SIZE 0x1000
+#define ZYNQ_GPIO_UPPER_MASK 0xFFFF0000
 #define GPIO_OUT 0
 #define GPIO_IN 1
 #define EDGE_RISING 0
 #define EDGE_FALLING 1
 #define EDGE_BOTH 2
+#define GPIO_OFFSET_OUTPUT_BANK(bankNumber) (0x0040 + (bankNumber * 0x04))
+#define GPIO_OFFSET_DIRM(bankNumber) (0x0204 + (bankNumber * 0x40))
+#define GPIO_OFFSET_OEN(bankNumber) (0x0208 + (bankNumber * 0x40))
+#define APER_CLK_CTRL 0x0000012C
+#define SYSTEM_LVL_CTR_BASE 0xF8000000
+#define PIN_NUMBER_PER_BANK 32
 
-void memory_Visualizer();
+
+int gpio_Mem_Set_Value(unsigned int port, int value);
+
+int gpio_Mem_Set_Data_Direction(int port, int direction);
+
+int gpio_Mem_Map();
+
+int gpio_Mem_Unmap(int fd);
+
+int gpio_Mem_Write(int port, int value);
+
+int open_Amba_clk();
+
+int enable_gpio_clock();
+
+int disable_gpio_clock();
+
+int gpio_Entire_Bank_On(int bankNumber);
+
+void print_Bank_Addr();
+
+// TODO make it local
+volatile unsigned int *g_CLOCK_ADDRESS;
+volatile void *g_MEMORY_MAP;
 
 int main(int argc, char *argv[]) {
 
-    memory_Visualizer();
+
+    int port = 32;
+    int fd = gpio_Mem_Map();
+    open_Amba_clk();
+    usleep(100);
+    enable_gpio_clock();
+    gpio_Mem_Set_Data_Direction(port, GPIO_OUT);
+    usleep(100);
+    //while(1){
+    gpio_Mem_Write(port, 1);
+    usleep(1);
+    //}
+    usleep(100);
+    disable_gpio_clock();
+    gpio_Mem_Unmap(fd);
+
+
+    return 0;
+}
+
+
+// TODO split this function into opening port and writing value
+// TODO split again the function which find the port corresponding bank
+/**
+ * DEPRECATED
+ *
+ * Check in what bank the port is in set it as an output and write in its register the value
+ * If 1 : (Current Content) or (1 shifted port time)
+ * If 0 : (Current Content) and (Not (1 shifted port time))
+ * @param port
+ * @param value
+ * @return
+ */
+int gpio_Mem_Set_Value(unsigned int port, int value) {
+    int bank;
+    int fd = open("/dev/mem", O_RDWR);
+    volatile void *gpio_ptr = mmap(NULL, GPIO_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, GPIO_BASE_ADDR);
+    if (gpio_ptr == MAP_FAILED) {
+        perror("Clk memory mapping failed");
+        exit(EXIT_FAILURE);
+    }
+    if (port < PIN_NUMBER_PER_BANK)
+        bank = 2;
+    else {
+        bank = 3;
+        port = port - PIN_NUMBER_PER_BANK;
+    }
+
+    volatile unsigned int *setDirectionAddr;
+    volatile unsigned int *setValueAddr;
+    volatile unsigned int *setOutputEnableAddr;
+    setDirectionAddr = gpio_ptr + GPIO_OFFSET_DIRM(bank);
+    setOutputEnableAddr = gpio_ptr + GPIO_OFFSET_OEN(bank);
+    setValueAddr = gpio_ptr + GPIO_OFFSET_OUTPUT_BANK(bank);
+
+
+    // Direction out
+    *setDirectionAddr |= (1u << port);
+    *setOutputEnableAddr |= (1u << port);
+    // Writing data
+    if (value == 0) {
+        *setValueAddr &= ~(1u << port);
+    } else {
+        *setValueAddr |= (1u << port);
+
+    }
+    //close(fd);
+    return 0;
+}
+
+int gpio_Entire_Bank_On(int bankNumber) {
+    int fd = open("/dev/mem", O_RDWR);
+    volatile void *gpio_ptr = mmap(NULL, GPIO_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, GPIO_BASE_ADDR);
+    if (gpio_ptr == MAP_FAILED) {
+        perror("Clk memory mapping failed");
+        exit(EXIT_FAILURE);
+    }
+    volatile unsigned int *setDirectionAddr;
+    volatile unsigned int *setValueAddr;
+    volatile unsigned int *setOutputEnableAddr;
+    setDirectionAddr = gpio_ptr + GPIO_OFFSET_DIRM(bankNumber);
+    setOutputEnableAddr = gpio_ptr + GPIO_OFFSET_OEN(bankNumber);
+    setValueAddr = gpio_ptr + GPIO_OFFSET_OUTPUT_BANK(bankNumber);
+
+    // Direction out for all the bank
+    *setDirectionAddr |= 0xFFFFFFFF;
+    *setOutputEnableAddr |= 0xFFFFFFFF;
+    sleep(1);
+    // Writing 1 on all the bank
+    *setValueAddr |= 0xFFFFFFFF;
+    //close(fd);
+    return 0;
+
+}
+
+int open_Amba_clk() {
+    int fd = open("/dev/mem", O_RDWR);
+    volatile void *gpio_ptr = mmap(NULL, GPIO_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, SYSTEM_LVL_CTR_BASE);
+    if (gpio_ptr == MAP_FAILED) {
+        perror("Clk memory mapping failed");
+        exit(EXIT_FAILURE);
+    }
+    volatile unsigned int *clkAddr;
+    clkAddr = gpio_ptr + APER_CLK_CTRL;
+    g_CLOCK_ADDRESS = clkAddr;
+    //close(fd);
+    return 0;
+}
+
+int enable_gpio_clock() {
+    *g_CLOCK_ADDRESS |= (1u << 22);
+}
+
+int disable_gpio_clock() {
+    *g_CLOCK_ADDRESS &= ~(1u << 22);
+}
+
+void print_Bank_Addr() {
+    int index;
+    for (index = 0; index < 4; index++) {
+        printf("Ouput : %x\tDirm : %x\tOEN : %x\r\n", GPIO_OFFSET_OUTPUT_BANK(index), GPIO_OFFSET_DIRM(index),
+               GPIO_OFFSET_OEN(index));
+    }
+}
+
+int gpio_Mem_Set_Data_Direction(int port, int direction) {
+    int bank;
+    if (port < PIN_NUMBER_PER_BANK)
+        bank = 2;
+    else {
+        bank = 3;
+        port = port - PIN_NUMBER_PER_BANK;
+    }
+    volatile unsigned int *setDirectionAddr;
+    volatile unsigned int *setOutputEnableAddr;
+
+    setDirectionAddr = g_MEMORY_MAP + GPIO_OFFSET_DIRM(bank);
+    setOutputEnableAddr = g_MEMORY_MAP + GPIO_OFFSET_OEN(bank);
+
+    // Set the direction
+    if (direction == GPIO_IN) {
+        *setDirectionAddr &= ~(1u << port);
+    } else {
+        *setDirectionAddr |= (1u << port);
+
+    }
+    // Enable or disable the output
+    if (direction == GPIO_IN) {
+        *setOutputEnableAddr &= ~(1u << port);
+    } else {
+        *setOutputEnableAddr |= (1u << port);
+
+    }
+    return 0;
+}
+
+// todo add structure and pointer arguments
+/**
+ * Map the gpio driver memory space
+ * Used before any operation to initialize g_MEMORY_MAP
+ * @return the file descriptor used for opening /dev/mem
+ */
+int gpio_Mem_Map() {
+    int fd = open("/dev/mem", O_RDWR);
+    g_MEMORY_MAP = mmap(NULL, GPIO_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, GPIO_BASE_ADDR);
+    if (g_MEMORY_MAP == MAP_FAILED) {
+        perror("Memory mapping failed");
+        exit(EXIT_FAILURE);
+    }
+    return fd;
+}
+
+/**
+ * Unmap previously mapped memory space
+ * Close opened file descriptor
+ * @param fd file descriptor returned by gpio_Mem_Map
+ * @return 0 in case of success, -1 in case of faillure
+ */
+int gpio_Mem_Unmap(int fd) {
+    int flag = munmap((void *) g_MEMORY_MAP, GPIO_MAP_SIZE);
+    if (flag < 0) {
+        perror("Memory unmapping failed");
+        return -1;
+    }
+    close(fd);
     return 0;
 }
 
 /**
- * Read the content from the GPIO Base address to its End address
- * Byte by byte
- * It goes from 0xE000A000 to 0xE000AFFF so 16 reading are necessary
- *
+ * Write the chosen value to a gpio port
+ * @param port Gpio port as defined in the .xdc file
+ * @param value Value to write, non zero is treated as one
+ * @return 0 in case of success
  */
-void memory_Visualizer() {
-    volatile void *gpio_addr;
-    volatile unsigned int *gpio_ptr;
-    int fd = open("/dev/mem", O_RDWR);
-
-    printf("Mapped size : %d or %#010x\n", GPIO_MAP_SIZE, GPIO_MAP_SIZE);
-    volatile unsigned char gpioContent;
-    int i;
-    while (1) {
-
-
-        // Byte decomposition from 0x000 to 0xFFF to print all memory content
-        for (i = 0; i < 16; i++) {
-            gpioContent = *gpio_ptr;
-            // mmap the GPIO device into user space and Read a Byte
-//            gpio_ptr = mmap(NULL, sizeof(char), PROT_READ | PROT_WRITE, MAP_SHARED, fd, (i * 0x100));
-            gpio_ptr = mmap(NULL, 1, PROT_READ | PROT_WRITE, MAP_SHARED, fd, i);
-            if (gpio_ptr == MAP_FAILED) {
-                printf("Mmap call failure.\n");
-                exit(EXIT_FAILURE);
-            }
-
-            printf("L%d : %d\r\n", i, gpioContent);
-        }
-        printf(" \r\n");
-        sleep(1);
+int gpio_Mem_Write(int port, int value) {
+    int bank;
+    if (port < PIN_NUMBER_PER_BANK)
+        bank = 2;
+    else {
+        bank = 3;
+        port = port - PIN_NUMBER_PER_BANK;
     }
+    volatile unsigned int *setValueAddr;
+    setValueAddr = g_MEMORY_MAP + GPIO_OFFSET_OUTPUT_BANK(bank);
+    // Writing data
+    if (value == 0) {
+        *setValueAddr &= ~(1u << port);
+    } else {
+        *setValueAddr |= (1u << port);
 
+    }
+    return 0;
 }
+

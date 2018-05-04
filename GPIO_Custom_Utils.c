@@ -120,11 +120,11 @@ int main(int argc, char *argv[]) {
 //        // exit(EXIT_FAILURE);
 //    }
 
-    int used_pins_Port[] = {25, 26, 27, 28, 29, 39, 31};
+    int used_pins_Port[] = {8, 9, 10};
     CustomTransceiver transceiver;
-    transceiver.clk_Port = 24;
+    transceiver.clk_Port = 7;
     transceiver.pins_Ports = used_pins_Port;
-    transceiver.nb_Data_Pins = 7;
+    transceiver.nb_Data_Pins = 3;
     if (gpio_Export_Transceiver(transceiver, GPIO_OUT) < 0) {
         //exit(EXIT_FAILURE);
     }
@@ -1089,13 +1089,12 @@ void transceiver_Print_Info(CustomTransceiver transceiver) {
  * @param internalRepetition
  */
 void transceiver_Write_Tester(int nbTest, int internalRepetition, CustomTransceiver transceiver) {
-    int dataSize = 7;
-    char dataToTransmit[] = {'1', '1', '1', '0', '0', '0', '0'};
-    char dataToTransmit2[] = {'0', '0', '0', '1', '1', '1', '1'};
+    int dataSize = 3;
+    char dataToTransmit[] = {'1', '1', '1'};
+    char dataToTransmit2[] = {'0', '0', '0'};
     int index = 0;
     struct timeval tv, tv2;
     long testResult[nbTest];
-    long testResultUS[nbTest];
 
     for (int j = 0; j < nbTest; j++) {
         gettimeofday(&tv, NULL);
