@@ -75,6 +75,8 @@ void print_Formatted_Data(const int *dataArray, int dataSize);
 
 void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay);
 
+void gpio_mem_multiple_speed_test(int nbTest, int internalRepetition, int delay);
+
 // TODO make it local
 volatile unsigned int *g_CLOCK_ADDRESS;
 volatile void *g_MEMORY_MAP;
@@ -111,25 +113,24 @@ int main(int argc, char *argv[]) {
 ////    printf("Returned size : %d\r\n", *returnedDataSize);
 ////    print_Formatted_Data(dataToPrint, *returnedDataSize);
 //
-//
+//    __uint32_t dataToSend = (1u << 7) | (1u << 8) | (1u << 9) | (1u << 10);
 //    int fd = gpio_Mem_Map();
+//    usleep(10);
 //    open_Amba_clk();
-//    usleep(100);
+//    usleep(10);
 //    enable_gpio_clock();
-//    usleep(100);
+//    usleep(10);
 //    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_OUT);
-//    usleep(100);
-////    gpio_Mem_Write_Direct_Data(3, (__uint32_t) dataToPrint[0]);
-//    gpio_Mem_Write_Transceiver_Slow(transceiver, data, 4);
-//    usleep(100);
+//    usleep(10);
+////    gpio_Mem_Write_Direct_Data(2, (__uint32_t) dataToPrint[0]);
+//    gpio_Mem_Write_Direct_Data(2, (__uint32_t) dataToSend);
+//
+//    usleep(10);
 //    disable_gpio_clock();
-//    usleep(100);
+//    usleep(10);
 //    gpio_Mem_Unmap(fd);
 
-
-    gpio_mem_speed_test(10, 1000000, 0);
-
-
+    gpio_mem_multiple_speed_test(10,1000000,0);
     return 0;
 }
 
@@ -386,12 +387,11 @@ int gpio_Mem_Write_Direct_Data(int bank, __uint32_t value) {
     volatile unsigned int *setValueAddr;
     setValueAddr = g_MEMORY_MAP + GPIO_OFFSET_OUTPUT_BANK(bank);
 
-    if (bank == 2){
-        int temp;
-        temp = (*setValueAddr & GPIO_BANK2_PROTECTION_MASK);
-        value = temp | value;
-
-    }
+//    if (bank == 2){
+//        int temp;
+//        temp = (*setValueAddr & GPIO_BANK2_PROTECTION_MASK);
+//        value = temp | value;
+//    }
     // Writing data
     *setValueAddr = (unsigned) value;
     return 0;
@@ -456,7 +456,7 @@ void print_Formatted_Data(const int *dataArray, int dataSize) {
     }
 }
 
-void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay){
+void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay) {
 
     int port = 32;
     int fd = gpio_Mem_Map();
@@ -476,12 +476,12 @@ void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay){
         for (index = 0; index < internalRepetition; index++) {
             value = 0;
             // Insert function to test here
-            gpio_Mem_Write(port,value);
+            gpio_Mem_Write(port, value);
             value = 1;
             for (int i = 0; i < delay; ++i) {
                 // nothing
             }
-            gpio_Mem_Write(port,value);
+            gpio_Mem_Write(port, value);
 
         }
         fsync(fd);
@@ -499,7 +499,76 @@ void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay){
 
     double averageTimeElapsed = ((double) result) / (nbTest - 2);
 
-    printf("Average time for internal function measured is : %lf\r\n us", averageTimeElapsed);
+    printf("Average time for internal function measured is : %lf us\r\n", averageTimeElapsed);
+
+    double period = averageTimeElapsed / internalRepetition;
+    printf("Average period is : %lf us\r\n", period);
+
+    double frequency = ((double) 1.00 / period) * 1000000;
+    printf("Average frequency is : %lf Hz\r\n", frequency);
+}
+
+void gpio_mem_multiple_speed_test(int nbTest, int internalRepetition, int delay) {
+
+
+    int data1[8] = {1, 0, 1, 0, 1, 0, 1, 0};
+    int data2[8] = {0, 1, 0, 1, 0, 1, 0, 1};
+
+    CustomMemTransceiver transceiver;
+    int pinPorts[8] = {31, 30, 29, 28, 27, 26, 25, 24};
+    transceiver.pins_Ports = pinPorts;
+    transceiver.nb_Data_Pins = 8;
+    transceiver.clk_Port = -1;
+    int *returnedDataSize = malloc(sizeof(int));
+    *returnedDataSize = 0;
+    int *dataToPrint = gpio_Mem_Formatting_Data(transceiver, data1, 8, returnedDataSize);
+    int *dataToPrint2 = gpio_Mem_Formatting_Data(transceiver, data2, 8, returnedDataSize);
+
+    printf("Returned size : %d\r\n", *returnedDataSize);
+    print_Formatted_Data(dataToPrint, *returnedDataSize);
+    print_Formatted_Data(dataToPrint2, *returnedDataSize);
+
+
+    int fd = gpio_Mem_Map();
+    usleep(10);
+    open_Amba_clk();
+    usleep(10);
+    enable_gpio_clock();
+    usleep(10);
+    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_OUT);
+    usleep(10);
+
+    int index = 0;
+    struct timeval tv, tv2;
+    long testResult[nbTest];
+    for (int j = 0; j < nbTest; j++) {
+        gettimeofday(&tv, NULL);
+        for (index = 0; index < internalRepetition; index++) {
+            // Insert function to test here
+            gpio_Mem_Write_Direct_Data(2, (__uint32_t) dataToPrint[0]);
+
+            for (int i = 0; i < delay; ++i) {
+                // nothing
+            }
+            gpio_Mem_Write_Direct_Data(2, (__uint32_t) dataToPrint2[0]);
+
+        }
+        fsync(fd);
+        gettimeofday(&tv2, NULL);
+        testResult[j] = (int) (tv2.tv_sec * 1000000 + tv2.tv_usec) - (int) (tv.tv_sec * 1000000 + tv.tv_usec);
+    }
+    usleep(100);
+    disable_gpio_clock();
+    gpio_Mem_Unmap(fd);
+
+    long result = 0;
+    for (int k = 1; k < nbTest - 1; k++) {
+        result += testResult[k];
+    }
+
+    double averageTimeElapsed = ((double) result) / (nbTest - 2);
+
+    printf("Average time for internal function measured is : %lf us\r\n", averageTimeElapsed);
 
     double period = averageTimeElapsed / internalRepetition;
     printf("Average period is : %lf us\r\n", period);
