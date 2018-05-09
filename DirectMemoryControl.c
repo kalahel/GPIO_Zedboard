@@ -27,18 +27,21 @@
 #define APER_CLK_CTRL 0x0000012C
 #define SYSTEM_LVL_CTR_BASE 0xF8000000
 #define PIN_NUMBER_PER_BANK 32
+#define DELAY_MAX 10000
+#define TIMEOUT_MAX_COUNT 1000
 
 /**
  * Transceiver responsible for handling data ports used for transmission
- * For now pins ports must belong to the same bank
+ * For now pins, tr and rc ports must belong to the same bank
  * Port array must be in most significant bit to least significant bit order
- * Set clk to negative value to disable it
+ * Set tc and rc to negative value to disable them
  */
 typedef struct {
     int nb_Data_Pins;
     int *pins_Ports;
-    int clk_Port;
-
+    int tc_Port;
+    int rc_Port;
+    int bank;
 } CustomMemTransceiver;
 
 
@@ -83,6 +86,8 @@ int gpio_Bank_From_port(int port);
 
 __uint32_t gpio_Shift_Data(__uint32_t data, int startingPort);
 
+uint32_t gpio_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag);
+
 void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay);
 
 void gpio_mem_multiple_speed_test(int nbTest, int internalRepetition, int delay);
@@ -109,46 +114,15 @@ int main(int argc, char *argv[]) {
 //    disable_gpio_clock();
 //    gpio_Mem_Unmap(fd);
 
-//
-
-//    int data[4] = {1, 0, 1, 0};
-//    CustomMemTransceiver transceiver;
-//    int pinPorts[4] = {10, 9, 8, 7};
-//    transceiver.pins_Ports = pinPorts;
-//    transceiver.nb_Data_Pins = 4;
-//    transceiver.clk_Port = -1;
-////    int *returnedDataSize = malloc(sizeof(int));
-////    *returnedDataSize = 0;
-////    int *dataToPrint = gpio_Mem_Formatting_Data(transceiver, data, 4, returnedDataSize);
-////    printf("Returned size : %d\r\n", *returnedDataSize);
-////    print_Formatted_Data(dataToPrint, *returnedDataSize);
-//
-//    __uint32_t dataToSend = (1u << 7) | (1u << 8) | (1u << 9) | (1u << 10);
-//    int fd = gpio_Mem_Map();
-//    usleep(10);
-//    open_Amba_clk();
-//    usleep(10);
-//    enable_gpio_clock();
-//    usleep(10);
-//    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_OUT);
-//    usleep(10);
-////    gpio_Mem_Write_Direct_Data(2, (__uint32_t) dataToPrint[0]);
-//    gpio_Mem_Write_Direct_Data(2, (__uint32_t) dataToSend);
-//
-//    usleep(10);
-//    disable_gpio_clock();
-//    usleep(10);
-//    gpio_Mem_Unmap(fd);
-
-//    gpio_mem_multiple_speed_test(10, 1000000, 0);
-
 
 
     CustomMemTransceiver transceiver;
-    int pinPort[8] = {18, 17, 16, 15, 14, 13, 12, 11};
+    int pinPort[7] = {18, 17, 16, 15, 14, 13, 12};
     transceiver.pins_Ports = pinPort;
-    transceiver.nb_Data_Pins = 8;
-    transceiver.clk_Port = -1;
+    transceiver.nb_Data_Pins = 7;
+    transceiver.tc_Port = -1;
+    transceiver.rc_Port = 11;
+    transceiver.bank = 2;
 
     uint32_t mask = gpio_Reading_Mask_From_Transceiver(transceiver);
     printf("Mask : %x\r\n", mask);
@@ -161,15 +135,20 @@ int main(int argc, char *argv[]) {
     usleep(100);
     unsigned int result, maskedResult;
     int index;
-    for (index = 0; index < 60; index++) {
-        result = gpio_Mem_Read_Bank(2);
+    int valueToWait = 1;
+    int *flag = malloc(sizeof(int));
+    *flag = 0;
+    for (index = 0; index < 10; index++) {
+        result = gpio_Wait_For_Value(transceiver, valueToWait, flag);
         printf("Result read : %u\r\n", result);
         maskedResult = result & mask;
         printf("Masked : %u\r\n", maskedResult);
         maskedResult = gpio_Shift_Data(maskedResult, transceiver.pins_Ports[7]);
         printf("Shifted : %u\r\n", maskedResult);
-        sleep(1);
+        valueToWait = !valueToWait;
     }
+
+    free(flag);
     disable_gpio_clock();
     usleep(10);
     gpio_Mem_Unmap(fd);
@@ -310,7 +289,7 @@ int gpio_Mem_Set_Data_Direction(int port, int direction) {
 
     }
     // TODO check if sleeping is necessary
-    usleep(10);
+    // usleep(1);
     // Enable or disable the output
     if (direction == GPIO_IN) {
         *setOutputEnableAddr &= ~(1u << port);
@@ -332,8 +311,10 @@ int gpio_Mem_Set_Transceiver_Direction(CustomMemTransceiver transceiver, int dir
     for (index = 0; index < transceiver.nb_Data_Pins; index++) {
         gpio_Mem_Set_Data_Direction(transceiver.pins_Ports[index], direction);
     }
-    if (transceiver.clk_Port < 0)
-        gpio_Mem_Set_Data_Direction(transceiver.clk_Port, direction);
+    if (transceiver.tc_Port > 0)
+        gpio_Mem_Set_Data_Direction(transceiver.tc_Port, GPIO_OUT);
+    if (transceiver.rc_Port > 0)
+        gpio_Mem_Set_Data_Direction(transceiver.rc_Port, GPIO_IN);
     return 0;
 }
 
@@ -579,6 +560,45 @@ __uint32_t gpio_Shift_Data(__uint32_t data, int startingPort) {
 
 }
 
+/**
+ * Wait for a particular value on the Rc chanel of a transceiver
+ * If the value is not directly read, the waiting become exponential
+ * Sleep is used to not hog resources
+ *
+ * @param transceiver Transceiver responsible for the communication
+ * @param value Value to wait for
+ * @param timeOutFlag If this function hit timeOut will be put to 1
+ * @return return the value read on the transceiver RO bank, if timeOut 0 is returned do not use this as timeOut check, use the flag pointer
+ */
+uint32_t gpio_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag) {
+    uint32_t readValue = gpio_Mem_Read_Bank(transceiver.bank);
+    uint32_t maskedValue = readValue & (1u << transceiver.rc_Port);
+    maskedValue = (uint32_t) (maskedValue != 0);
+    if (maskedValue == value)
+        return readValue;
+    else {
+        __useconds_t delay = 1;
+        int timeOutTimer = 0;
+        while (timeOutTimer < TIMEOUT_MAX_COUNT) {
+            usleep(delay);
+            readValue = gpio_Mem_Read_Bank(transceiver.bank);
+            maskedValue = readValue & (1u << transceiver.rc_Port);
+            maskedValue = (uint32_t) (maskedValue != 0);
+            if (maskedValue == value)
+                return readValue;
+            else {
+                if (delay < DELAY_MAX) {
+                    delay *= 10;
+                } else {
+                    timeOutTimer++;
+                }
+            }
+        }
+        *timeOutFlag = 1;
+        return 0;
+    }
+}
+
 
 void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay) {
 
@@ -642,7 +662,7 @@ void gpio_mem_multiple_speed_test(int nbTest, int internalRepetition, int delay)
     int pinPorts[8] = {31, 30, 29, 28, 27, 26, 25, 24};
     transceiver.pins_Ports = pinPorts;
     transceiver.nb_Data_Pins = 8;
-    transceiver.clk_Port = -1;
+    transceiver.tc_Port = -1;
     int *returnedDataSize = malloc(sizeof(int));
     *returnedDataSize = 0;
     int *dataToPrint = gpio_Mem_Formatting_Data(transceiver, data1, 8, returnedDataSize);
