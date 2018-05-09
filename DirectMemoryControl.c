@@ -23,6 +23,7 @@
 #define GPIO_OFFSET_OUTPUT_BANK(bankNumber) (0x0040 + ((bankNumber) * 0x04))
 #define GPIO_OFFSET_DIRM(bankNumber) (0x0204 + ((bankNumber) * 0x40))
 #define GPIO_OFFSET_OEN(bankNumber) (0x0208 + ((bankNumber) * 0x40))
+#define GPIO_DATA_RO(bankNumber) (0x60 + ((bankNumber)* 0x04))
 #define APER_CLK_CTRL 0x0000012C
 #define SYSTEM_LVL_CTR_BASE 0xF8000000
 #define PIN_NUMBER_PER_BANK 32
@@ -47,6 +48,7 @@ int gpio_Mem_Set_Data_Direction(int port, int direction);
 
 int gpio_Mem_Set_Transceiver_Direction(CustomMemTransceiver transceiver, int direction);
 
+int gpio_Mem_Set_Data_Direction_Range(int firstPort, int lastPort, int direction);
 
 int gpio_Mem_Map();
 
@@ -58,6 +60,8 @@ int gpio_Mem_Write_Transceiver_Slow(CustomMemTransceiver transceiver, int *dataA
 
 int gpio_Mem_Write_Direct_Data(int bank, __uint32_t value);
 
+unsigned int gpio_Mem_Read_Bank(int bank);
+
 int open_Amba_clk();
 
 int enable_gpio_clock();
@@ -68,10 +72,16 @@ int gpio_Entire_Bank_On(int bankNumber);
 
 void print_Bank_Addr();
 
+__uint32_t gpio_Reading_Mask_From_Transceiver(CustomMemTransceiver transceiver);
+
 int *
 gpio_Mem_Formatting_Data(CustomMemTransceiver transceiver, const int *dataArray, int dataSize, int *resultArraySize);
 
 void print_Formatted_Data(const int *dataArray, int dataSize);
+
+int gpio_Bank_From_port(int port);
+
+__uint32_t gpio_Shift_Data(__uint32_t data, int startingPort);
 
 void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay);
 
@@ -98,8 +108,8 @@ int main(int argc, char *argv[]) {
 //    usleep(100);
 //    disable_gpio_clock();
 //    gpio_Mem_Unmap(fd);
-//
 
+//
 
 //    int data[4] = {1, 0, 1, 0};
 //    CustomMemTransceiver transceiver;
@@ -130,7 +140,40 @@ int main(int argc, char *argv[]) {
 //    usleep(10);
 //    gpio_Mem_Unmap(fd);
 
-    gpio_mem_multiple_speed_test(10,1000000,0);
+//    gpio_mem_multiple_speed_test(10, 1000000, 0);
+
+
+
+    CustomMemTransceiver transceiver;
+    int pinPort[8] = {18, 17, 16, 15, 14, 13, 12, 11};
+    transceiver.pins_Ports = pinPort;
+    transceiver.nb_Data_Pins = 8;
+    transceiver.clk_Port = -1;
+
+    uint32_t mask = gpio_Reading_Mask_From_Transceiver(transceiver);
+    printf("Mask : %x\r\n", mask);
+
+    int fd = gpio_Mem_Map();
+    open_Amba_clk();
+    usleep(100);
+    enable_gpio_clock();
+    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_IN);
+    usleep(100);
+    unsigned int result, maskedResult;
+    int index;
+    for (index = 0; index < 60; index++) {
+        result = gpio_Mem_Read_Bank(2);
+        printf("Result read : %u\r\n", result);
+        maskedResult = result & mask;
+        printf("Masked : %u\r\n", maskedResult);
+        maskedResult = gpio_Shift_Data(maskedResult, transceiver.pins_Ports[7]);
+        printf("Shifted : %u\r\n", maskedResult);
+        sleep(1);
+    }
+    disable_gpio_clock();
+    usleep(10);
+    gpio_Mem_Unmap(fd);
+
     return 0;
 }
 
@@ -294,6 +337,21 @@ int gpio_Mem_Set_Transceiver_Direction(CustomMemTransceiver transceiver, int dir
     return 0;
 }
 
+/**
+ * Set the direction for a range of port
+ * @param firstPort Starting point for the setting of direction
+ * @param lastPort Ending point for the setting of direction
+ * @param direction GPIO_IN/GPIO_OUT
+ * @return 0 in case of success
+ */
+int gpio_Mem_Set_Data_Direction_Range(int firstPort, int lastPort, int direction) {
+    int index;
+    for (index = 0; index < ((lastPort - firstPort) + 1); index++) {
+        gpio_Mem_Set_Data_Direction(firstPort + index, direction);
+    }
+    return 0;
+}
+
 
 // todo add structure and pointer arguments
 /**
@@ -315,7 +373,7 @@ int gpio_Mem_Map() {
  * Unmap previously mapped memory space
  * Close opened file descriptor
  * @param fd file descriptor returned by gpio_Mem_Map
- * @return 0 in case of success, -1 in case of faillure
+ * @return 0 in case of success, -1 in case of failure
  */
 int gpio_Mem_Unmap(int fd) {
     int flag = munmap((void *) g_MEMORY_MAP, GPIO_MAP_SIZE);
@@ -375,28 +433,46 @@ int gpio_Mem_Write_Transceiver_Slow(CustomMemTransceiver transceiver, int *dataA
 
 
 /**
- * NOT FUNCTIONAL
  * Write data on an entire bank
+ *
  * @param bank Bank to write data on
  * @param value Value used to generated output
- * @return 0 in case o success
+ * @return 0 in case of success
  */
 int gpio_Mem_Write_Direct_Data(int bank, __uint32_t value) {
-    // If bank 2, mask the data to prevent change in OLED display
-
     volatile unsigned int *setValueAddr;
     setValueAddr = g_MEMORY_MAP + GPIO_OFFSET_OUTPUT_BANK(bank);
-
-//    if (bank == 2){
-//        int temp;
-//        temp = (*setValueAddr & GPIO_BANK2_PROTECTION_MASK);
-//        value = temp | value;
-//    }
     // Writing data
-    *setValueAddr = (unsigned) value;
+    *setValueAddr = value;
     return 0;
 }
 
+/**
+ * Write a buffer, 32 bits by 32 bits
+ *
+ * @param bank Bank to write data on
+ * @param dataArray Array of writable values
+ * @param dataSize Size of the array
+ * @return 0 in case of success
+ */
+int gpio_Mem_Write_Buffer(int bank, int *dataArray, size_t dataSize) {
+    size_t index;
+    for (index = 0; index < dataSize; index++) {
+        gpio_Mem_Write_Direct_Data(bank, (__uint32_t) dataArray[index]);
+    }
+    return 0;
+}
+
+/**
+ * Read the entirety of a bank RO register
+ * @param bank Bank to read from
+ * @return value read
+ */
+unsigned int gpio_Mem_Read_Bank(int bank) {
+    volatile unsigned int *readValueAddr;
+    readValueAddr = g_MEMORY_MAP + GPIO_DATA_RO(bank);
+    return (*readValueAddr);
+}
 
 /**
  * Convert an array of binary values to an array of "Writable" values for the actual transceiver
@@ -419,6 +495,7 @@ gpio_Mem_Formatting_Data(CustomMemTransceiver transceiver, const int *dataArray,
         requiredRows = (dataSize / transceiver.nb_Data_Pins) + 1;
 
     }
+    // TODO handle the free of this array later
     int *usableDataArray = malloc(requiredRows * sizeof(int));
     if (usableDataArray == NULL) {
         perror("Memory allocation failed");
@@ -455,6 +532,53 @@ void print_Formatted_Data(const int *dataArray, int dataSize) {
         printf("%x\r\n", dataArray[index]);
     }
 }
+
+/**
+ * Return the bank from witch the given port belong
+ * @param port Port to evaluate
+ * @return Bank number
+ */
+int gpio_Bank_From_port(int port) {
+    if (port < PIN_NUMBER_PER_BANK)
+        return 2;
+    else
+        return 3;
+}
+
+/**
+ * Since reading a bank return a 32 bit, it is mandatory to mask it to obtain the researched data
+ * Mask read data as follow : readData &= mask
+ *
+ * @param transceiver Transceiver containing the port to mask
+ * @return  A 32 bit mask
+ */
+__uint32_t gpio_Reading_Mask_From_Transceiver(CustomMemTransceiver transceiver) {
+    int index;
+    __uint32_t mask = 0;
+    for (index = 0; index < transceiver.nb_Data_Pins; index++) {
+        mask |= (1u << transceiver.pins_Ports[index]);
+    }
+    return mask;
+}
+
+/**
+ * Used to shift data read accordingly to port offset
+ * Warning : use this functionly only if transmission ports are consecutive
+ *
+ * @param data Data to shift
+ * @param startingPort First port of the reader port set
+ * @return Shifted data
+ */
+__uint32_t gpio_Shift_Data(__uint32_t data, int startingPort) {
+    if (gpio_Bank_From_port(startingPort) == 2) {
+        data = data >> startingPort;
+    } else {
+        data = data >> (startingPort - PIN_NUMBER_PER_BANK);
+    }
+    return data;
+
+}
+
 
 void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay) {
 
