@@ -29,8 +29,11 @@
 #define PIN_NUMBER_PER_BANK 32
 #define DELAY_MAX 10000
 #define TIMEOUT_MAX_COUNT 1000
-#define TC_START 1
-#define TC_STOP 0
+#define TC_HIGH 1
+#define TC_LOW 0
+#define RC_HIGH 1
+#define RC_LOW 0
+
 
 /**
  * Transceiver responsible for handling data ports used for transmission
@@ -65,6 +68,8 @@ int gpio_Mem_Write_Transceiver_Slow(CustomMemTransceiver transceiver, int *dataA
 
 int gpio_Mem_Write_Direct_Data(int bank, __uint32_t value);
 
+int gpio_Mem_Chip_To_Chip_Writer(CustomMemTransceiver transceiver, int *writableDataArray, int writableDataArraySize);
+
 unsigned int gpio_Mem_Read_Bank(int bank);
 
 int open_Amba_clk();
@@ -83,15 +88,17 @@ int *
 gpio_Mem_Formatting_Binary_Data(CustomMemTransceiver transceiver, const int *dataArray, int dataSize,
                                 int *resultArraySize);
 
+int *gpio_Mem_Formatting_Integer_Data(CustomMemTransceiver transceiver, const uint32_t *dataArray, int dataSize);
+
 void print_Formatted_Data(const int *dataArray, int dataSize);
 
 int gpio_Bank_From_port(int port);
 
 int gpio_Mem_Shift_Data(CustomMemTransceiver transceiver, uint32_t data);
 
-__uint32_t gpio_Unshift_Data(CustomMemTransceiver transceiver, __uint32_t data);
+__uint32_t gpio_Mem_Unshift_Data(CustomMemTransceiver transceiver, __uint32_t data);
 
-uint32_t gpio_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag);
+uint32_t gpio_Mem_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag);
 
 int gpio_Mem_Transceiver_Send_Data(CustomMemTransceiver transceiver, __uint32_t value, int tcState);
 
@@ -123,14 +130,14 @@ int main(int argc, char *argv[]) {
 
 
 
-    CustomMemTransceiver transceiver;
-    int pinPort[7] = {18, 17, 16, 15, 14, 13, 12};
-    transceiver.pins_Ports = pinPort;
-    transceiver.nb_Data_Pins = 7;
-    transceiver.tc_Port = -1;
-    transceiver.rc_Port = 11;
-    transceiver.bank = 2;
-
+//    CustomMemTransceiver transceiver;
+//    int pinPort[7] = {18, 17, 16, 15, 14, 13, 12};
+//    transceiver.pins_Ports = pinPort;
+//    transceiver.nb_Data_Pins = 7;
+//    transceiver.tc_Port = -1;
+//    transceiver.rc_Port = 11;
+//    transceiver.bank = 2;
+//
 //    uint32_t mask = gpio_Reading_Mask_From_Transceiver(transceiver);
 //    printf("Mask : %x\r\n", mask);
 //
@@ -146,11 +153,11 @@ int main(int argc, char *argv[]) {
 //    int *flag = malloc(sizeof(int));
 //    *flag = 0;
 //    for (index = 0; index < 10; index++) {
-//        result = gpio_Wait_For_Value(transceiver, valueToWait, flag);
+//        result = gpio_Mem_Wait_For_Value(transceiver, valueToWait, flag);
 //        printf("Result read : %u\r\n", result);
 //        maskedResult = result & mask;
 //        printf("Masked : %u\r\n", maskedResult);
-//        maskedResult = gpio_Unshift_Data(maskedResult, transceiver.pins_Ports[6]);
+//        maskedResult = gpio_Mem_Unshift_Data(transceiver, maskedResult);
 //        printf("Shifted : %u\r\n", maskedResult);
 //        valueToWait = !valueToWait;
 //    }
@@ -160,8 +167,31 @@ int main(int argc, char *argv[]) {
 //    usleep(10);
 //    gpio_Mem_Unmap(fd);
 
-        unsigned int value = (unsigned int) gpio_Mem_Shift_Data(transceiver, 7u);
-        printf("value : %x\r\n",value);
+    CustomMemTransceiver transceiver;
+    int pinPort[4] = {10, 9, 8, 7};
+    transceiver.pins_Ports = pinPort;
+    transceiver.nb_Data_Pins = 4;
+    transceiver.tc_Port = -1;
+    transceiver.rc_Port = 11;
+    transceiver.bank = 2;
+
+    __uint32_t data[5] = {2u, 4u, 5u, 7u, 8u};
+    int *printableData = gpio_Mem_Formatting_Integer_Data(transceiver, data, 5);
+    int fd = gpio_Mem_Map();
+    open_Amba_clk();
+    usleep(100);
+    enable_gpio_clock();
+    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_OUT);
+    usleep(100);
+
+    gpio_Mem_Chip_To_Chip_Writer(transceiver, printableData, 5);
+
+
+    free(printableData);
+    disable_gpio_clock();
+    usleep(10);
+    gpio_Mem_Unmap(fd);
+
 
     return 0;
 }
@@ -439,6 +469,58 @@ int gpio_Mem_Write_Direct_Data(int bank, __uint32_t value) {
 }
 
 /**
+ * Start the communication with another device
+ * Start by setting Tc to high
+ * First data send is the number of data that will follow
+ * Complementing Tc state and awaiting response from receiver to continue
+ * Finally reset the state of Tc to '0'
+ *
+ * @param transceiver Data structure containing all ports informations
+ * @param writableDataArray Formatted data array, must be ready to write on the port accordingly to the current transceiver
+ * @param writableDataArraySize Size of the data array
+ * @return 0 in case of success, -1 in case of timeout
+ */
+int gpio_Mem_Chip_To_Chip_Writer(CustomMemTransceiver transceiver, int *writableDataArray, int writableDataArraySize) {
+    int timeOutFlagValue = 0;
+    int *timeOutPointer = &timeOutFlagValue;
+    int tcState = TC_HIGH;
+    // Start the communication request by setting Tc pin to high
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_HIGH);
+    // Wait for the acknowledgement response
+    gpio_Mem_Wait_For_Value(transceiver, RC_HIGH, timeOutPointer);
+    if (*timeOutPointer != 0) {
+        perror("Transmission request timed out, no response from receiver");
+        return -1;
+    }
+    gpio_Mem_Transceiver_Send_Data(transceiver, (__uint32_t) gpio_Mem_Shift_Data(transceiver,
+                                                                                 (uint32_t) writableDataArraySize),
+                                   TC_LOW);
+    gpio_Mem_Wait_For_Value(transceiver, RC_LOW, timeOutPointer);
+    if (*timeOutPointer != 0) {
+        perror("Transmission of the size timed out, no response from receiver");
+        return -1;
+    }
+
+    int index;
+    for (index = 0; index < writableDataArraySize; ++index) {
+        gpio_Mem_Transceiver_Send_Data(transceiver, (__uint32_t) writableDataArray[index], tcState);
+        // Waiting for response from the receiver, Rc must in same state as Tc
+        gpio_Mem_Wait_For_Value(transceiver, tcState, timeOutPointer);
+        if (*timeOutPointer != 0) {
+            perror("Transmission timed out, no response from receiver");
+            return -1;
+        }
+        tcState = !tcState;
+    }
+
+
+
+    // Reset state of Tc
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
+    return 0;
+}
+
+/**
  * Write a buffer, 32 bits by 32 bits
  *
  * @param bank Bank to write data on
@@ -518,6 +600,25 @@ gpio_Mem_Formatting_Binary_Data(CustomMemTransceiver transceiver, const int *dat
     return usableDataArray;
 }
 
+/**
+ * Shift data array to adapt to given transceiver
+ * Warning does not check for overflow of data, may result in data loss
+ * Use this function carefully
+ * Do not forget to free the result array later
+ *
+ * @param transceiver Structure containing all the port information
+ * @param dataArray Array of unsigned integer value to b converted
+ * @param dataSize Size of the data array
+ * @return Pointer to the writable data array
+ */
+int *gpio_Mem_Formatting_Integer_Data(CustomMemTransceiver transceiver, const uint32_t *dataArray, int dataSize) {
+    int *usableDataArray = malloc(dataSize * sizeof(int));
+    int index;
+    for (index = 0; index < dataSize; ++index) {
+        usableDataArray[index] = gpio_Mem_Shift_Data(transceiver, dataArray[index]);
+    }
+    return usableDataArray;
+}
 
 void print_Formatted_Data(const int *dataArray, int dataSize) {
     int index;
@@ -583,7 +684,7 @@ int gpio_Mem_Shift_Data(CustomMemTransceiver transceiver, uint32_t data) {
  * @param data Data to shift
  * @return Shifted data
  */
-__uint32_t gpio_Unshift_Data(CustomMemTransceiver transceiver, __uint32_t data) {
+__uint32_t gpio_Mem_Unshift_Data(CustomMemTransceiver transceiver, __uint32_t data) {
     if (gpio_Bank_From_port(transceiver.pins_Ports[transceiver.nb_Data_Pins - 1]) == 2) {
         data = data >> transceiver.pins_Ports[transceiver.nb_Data_Pins - 1];
     } else {
@@ -604,7 +705,7 @@ __uint32_t gpio_Unshift_Data(CustomMemTransceiver transceiver, __uint32_t data) 
  * @param timeOutFlag If this function hit timeOut will be put to 1
  * @return return the value read on the transceiver RO bank, if timeOut 0 is returned do not use this as timeOut check, use the flag pointer
  */
-uint32_t gpio_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag) {
+uint32_t gpio_Mem_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag) {
     uint32_t readValue = gpio_Mem_Read_Bank(transceiver.bank);
     uint32_t maskedValue = readValue & (1u << transceiver.rc_Port);
     maskedValue = (uint32_t) (maskedValue != 0);
@@ -635,6 +736,8 @@ uint32_t gpio_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *t
 
 /**
  * Will add to the data, the Tc state allowing serial reading
+ * If tc is set to -1, it will be ignored ( 1 << -1 = 0)
+ *
  * @param transceiver Transceiver responsible for handling communication
  * @param value "Writable" data
  * @param tcState Current state of the Tc port
