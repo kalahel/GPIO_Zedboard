@@ -83,13 +83,13 @@ int *
 gpio_Mem_Formatting_Binary_Data(CustomMemTransceiver transceiver, const int *dataArray, int dataSize,
                                 int *resultArraySize);
 
-int gpio_Mem_Formating_Integer_Data(CustomMemTransceiver transceiver, uint32_t data);
-
 void print_Formatted_Data(const int *dataArray, int dataSize);
 
 int gpio_Bank_From_port(int port);
 
-__uint32_t gpio_Shift_Data(__uint32_t data, int startingPort);
+int gpio_Mem_Shift_Data(CustomMemTransceiver transceiver, uint32_t data);
+
+__uint32_t gpio_Unshift_Data(CustomMemTransceiver transceiver, __uint32_t data);
 
 uint32_t gpio_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag);
 
@@ -131,34 +131,37 @@ int main(int argc, char *argv[]) {
     transceiver.rc_Port = 11;
     transceiver.bank = 2;
 
-    uint32_t mask = gpio_Reading_Mask_From_Transceiver(transceiver);
-    printf("Mask : %x\r\n", mask);
+//    uint32_t mask = gpio_Reading_Mask_From_Transceiver(transceiver);
+//    printf("Mask : %x\r\n", mask);
+//
+//    int fd = gpio_Mem_Map();
+//    open_Amba_clk();
+//    usleep(100);
+//    enable_gpio_clock();
+//    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_IN);
+//    usleep(100);
+//    unsigned int result, maskedResult;
+//    int index;
+//    int valueToWait = 1;
+//    int *flag = malloc(sizeof(int));
+//    *flag = 0;
+//    for (index = 0; index < 10; index++) {
+//        result = gpio_Wait_For_Value(transceiver, valueToWait, flag);
+//        printf("Result read : %u\r\n", result);
+//        maskedResult = result & mask;
+//        printf("Masked : %u\r\n", maskedResult);
+//        maskedResult = gpio_Unshift_Data(maskedResult, transceiver.pins_Ports[6]);
+//        printf("Shifted : %u\r\n", maskedResult);
+//        valueToWait = !valueToWait;
+//    }
+//
+//    free(flag);
+//    disable_gpio_clock();
+//    usleep(10);
+//    gpio_Mem_Unmap(fd);
 
-    int fd = gpio_Mem_Map();
-    open_Amba_clk();
-    usleep(100);
-    enable_gpio_clock();
-    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_IN);
-    usleep(100);
-    unsigned int result, maskedResult;
-    int index;
-    int valueToWait = 1;
-    int *flag = malloc(sizeof(int));
-    *flag = 0;
-    for (index = 0; index < 10; index++) {
-        result = gpio_Wait_For_Value(transceiver, valueToWait, flag);
-        printf("Result read : %u\r\n", result);
-        maskedResult = result & mask;
-        printf("Masked : %u\r\n", maskedResult);
-        maskedResult = gpio_Shift_Data(maskedResult, transceiver.pins_Ports[6]);
-        printf("Shifted : %u\r\n", maskedResult);
-        valueToWait = !valueToWait;
-    }
-
-    free(flag);
-    disable_gpio_clock();
-    usleep(10);
-    gpio_Mem_Unmap(fd);
+        unsigned int value = (unsigned int) gpio_Mem_Shift_Data(transceiver, 7u);
+        printf("value : %x\r\n",value);
 
     return 0;
 }
@@ -515,19 +518,6 @@ gpio_Mem_Formatting_Binary_Data(CustomMemTransceiver transceiver, const int *dat
     return usableDataArray;
 }
 
-/**
- * Shift the data to adapt to the transceiver
- * Data size and transceiver offset are not checked
- * Warning risk of overflowing and data loss
- *
- * @param transceiver
- * @param data Data to convert in a writable way
- * @return The converted data
- */
-int gpio_Mem_Formating_Integer_Data(CustomMemTransceiver transceiver, uint32_t data) {
-    return (data << transceiver.pins_Ports[transceiver.nb_Data_Pins - 1]);
-}
-
 
 void print_Formatted_Data(const int *dataArray, int dataSize) {
     int index;
@@ -564,23 +554,45 @@ __uint32_t gpio_Reading_Mask_From_Transceiver(CustomMemTransceiver transceiver) 
     return mask;
 }
 
+
+/**
+ * Shift the data to adapt to the transceiver
+ * Data size and transceiver offset are not checked
+ * Warning risk of overflowing and data loss
+ *
+ * @param transceiver
+ * @param data Data to convert in a writable way
+ * @return The converted data
+ */
+int gpio_Mem_Shift_Data(CustomMemTransceiver transceiver, uint32_t data) {
+
+    if (gpio_Bank_From_port(transceiver.pins_Ports[transceiver.nb_Data_Pins - 1]) == 2) {
+        data = data << transceiver.pins_Ports[transceiver.nb_Data_Pins - 1];
+    } else {
+        data = data << (transceiver.pins_Ports[transceiver.nb_Data_Pins - 1] - PIN_NUMBER_PER_BANK);
+    }
+    return data;
+}
+
+
 /**
  * Used to shift data read accordingly to port offset
  * Warning : use this functionly only if transmission ports are consecutive
  *
+ * @param transceiver
  * @param data Data to shift
- * @param startingPort First port of the reader port set
  * @return Shifted data
  */
-__uint32_t gpio_Shift_Data(__uint32_t data, int startingPort) {
-    if (gpio_Bank_From_port(startingPort) == 2) {
-        data = data >> startingPort;
+__uint32_t gpio_Unshift_Data(CustomMemTransceiver transceiver, __uint32_t data) {
+    if (gpio_Bank_From_port(transceiver.pins_Ports[transceiver.nb_Data_Pins - 1]) == 2) {
+        data = data >> transceiver.pins_Ports[transceiver.nb_Data_Pins - 1];
     } else {
-        data = data >> (startingPort - PIN_NUMBER_PER_BANK);
+        data = data >> (transceiver.pins_Ports[transceiver.nb_Data_Pins - 1] - PIN_NUMBER_PER_BANK);
     }
     return data;
 
 }
+
 
 /**
  * Wait for a particular value on the Rc chanel of a transceiver
