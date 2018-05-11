@@ -29,6 +29,8 @@
 #define PIN_NUMBER_PER_BANK 32
 #define DELAY_MAX 10000
 #define TIMEOUT_MAX_COUNT 1000
+#define TC_START 1
+#define TC_STOP 0
 
 /**
  * Transceiver responsible for handling data ports used for transmission
@@ -78,7 +80,10 @@ void print_Bank_Addr();
 __uint32_t gpio_Reading_Mask_From_Transceiver(CustomMemTransceiver transceiver);
 
 int *
-gpio_Mem_Formatting_Data(CustomMemTransceiver transceiver, const int *dataArray, int dataSize, int *resultArraySize);
+gpio_Mem_Formatting_Binary_Data(CustomMemTransceiver transceiver, const int *dataArray, int dataSize,
+                                int *resultArraySize);
+
+int gpio_Mem_Formating_Integer_Data(CustomMemTransceiver transceiver, uint32_t data);
 
 void print_Formatted_Data(const int *dataArray, int dataSize);
 
@@ -87,6 +92,8 @@ int gpio_Bank_From_port(int port);
 __uint32_t gpio_Shift_Data(__uint32_t data, int startingPort);
 
 uint32_t gpio_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag);
+
+int gpio_Mem_Transceiver_Send_Data(CustomMemTransceiver transceiver, __uint32_t value, int tcState);
 
 void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay);
 
@@ -143,7 +150,7 @@ int main(int argc, char *argv[]) {
         printf("Result read : %u\r\n", result);
         maskedResult = result & mask;
         printf("Masked : %u\r\n", maskedResult);
-        maskedResult = gpio_Shift_Data(maskedResult, transceiver.pins_Ports[7]);
+        maskedResult = gpio_Shift_Data(maskedResult, transceiver.pins_Ports[6]);
         printf("Shifted : %u\r\n", maskedResult);
         valueToWait = !valueToWait;
     }
@@ -466,7 +473,8 @@ unsigned int gpio_Mem_Read_Bank(int bank) {
  * @return The newly formatted data array
  */
 int *
-gpio_Mem_Formatting_Data(CustomMemTransceiver transceiver, const int *dataArray, int dataSize, int *resultArraySize) {
+gpio_Mem_Formatting_Binary_Data(CustomMemTransceiver transceiver, const int *dataArray, int dataSize,
+                                int *resultArraySize) {
     int requiredRows;
     if (dataSize % transceiver.nb_Data_Pins == 0) {
         requiredRows = dataSize / transceiver.nb_Data_Pins;
@@ -506,6 +514,20 @@ gpio_Mem_Formatting_Data(CustomMemTransceiver transceiver, const int *dataArray,
     }
     return usableDataArray;
 }
+
+/**
+ * Shift the data to adapt to the transceiver
+ * Data size and transceiver offset are not checked
+ * Warning risk of overflowing and data loss
+ *
+ * @param transceiver
+ * @param data Data to convert in a writable way
+ * @return The converted data
+ */
+int gpio_Mem_Formating_Integer_Data(CustomMemTransceiver transceiver, uint32_t data) {
+    return (data << transceiver.pins_Ports[transceiver.nb_Data_Pins - 1]);
+}
+
 
 void print_Formatted_Data(const int *dataArray, int dataSize) {
     int index;
@@ -599,6 +621,23 @@ uint32_t gpio_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *t
     }
 }
 
+/**
+ * Will add to the data, the Tc state allowing serial reading
+ * @param transceiver Transceiver responsible for handling communication
+ * @param value "Writable" data
+ * @param tcState Current state of the Tc port
+ * @return The result of gpio_Mem_Write_Direct_Data
+ */
+int gpio_Mem_Transceiver_Send_Data(CustomMemTransceiver transceiver, __uint32_t value, int tcState) {
+
+    if (tcState == 0) {
+        value &= ~(1u << transceiver.tc_Port);
+    } else {
+        value |= (1u << transceiver.tc_Port);
+    }
+    return gpio_Mem_Write_Direct_Data(transceiver.bank, value);
+
+}
 
 void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay) {
 
@@ -665,8 +704,8 @@ void gpio_mem_multiple_speed_test(int nbTest, int internalRepetition, int delay)
     transceiver.tc_Port = -1;
     int *returnedDataSize = malloc(sizeof(int));
     *returnedDataSize = 0;
-    int *dataToPrint = gpio_Mem_Formatting_Data(transceiver, data1, 8, returnedDataSize);
-    int *dataToPrint2 = gpio_Mem_Formatting_Data(transceiver, data2, 8, returnedDataSize);
+    int *dataToPrint = gpio_Mem_Formatting_Binary_Data(transceiver, data1, 8, returnedDataSize);
+    int *dataToPrint2 = gpio_Mem_Formatting_Binary_Data(transceiver, data2, 8, returnedDataSize);
 
     printf("Returned size : %d\r\n", *returnedDataSize);
     print_Formatted_Data(dataToPrint, *returnedDataSize);
