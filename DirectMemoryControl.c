@@ -70,6 +70,8 @@ int gpio_Mem_Write_Direct_Data(int bank, __uint32_t value);
 
 int gpio_Mem_Chip_To_Chip_Writer(CustomMemTransceiver transceiver, int *writableDataArray, int writableDataArraySize);
 
+__uint32_t *gpio_Mem_Chip_To_Chip_Reader(CustomMemTransceiver transceiver, __uint32_t *resultArraySize);
+
 unsigned int gpio_Mem_Read_Bank(int bank);
 
 int open_Amba_clk();
@@ -90,7 +92,7 @@ gpio_Mem_Formatting_Binary_Data(CustomMemTransceiver transceiver, const int *dat
 
 int *gpio_Mem_Formatting_Integer_Data(CustomMemTransceiver transceiver, const uint32_t *dataArray, int dataSize);
 
-void print_Formatted_Data(const int *dataArray, int dataSize);
+void print_Formatted_Data(__uint32_t *dataArray, int dataSize);
 
 int gpio_Bank_From_port(int port);
 
@@ -167,6 +169,7 @@ int main(int argc, char *argv[]) {
 //    usleep(10);
 //    gpio_Mem_Unmap(fd);
 
+    /*
     CustomMemTransceiver transceiver;
     int pinPort[4] = {10, 9, 8, 7};
     transceiver.pins_Ports = pinPort;
@@ -188,6 +191,42 @@ int main(int argc, char *argv[]) {
 
 
     free(printableData);
+    disable_gpio_clock();
+    usleep(10);
+    gpio_Mem_Unmap(fd);
+    */
+
+    CustomMemTransceiver transceiver;
+    int pinPort[7] = {18, 17, 16, 15, 14, 13, 12};
+    transceiver.pins_Ports = pinPort;
+    transceiver.nb_Data_Pins = 7;
+    transceiver.tc_Port = 10;
+    transceiver.rc_Port = 11;
+    transceiver.bank = 2;
+
+    int fd = gpio_Mem_Map();
+    open_Amba_clk();
+    usleep(100);
+    enable_gpio_clock();
+    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_IN);
+    usleep(100);
+
+    int flag = 0;
+    __uint32_t resultSize = 0;
+    __uint32_t *resultArray;
+    gpio_Mem_Wait_For_Value(transceiver, RC_HIGH, &flag);
+    if (flag != 0) {
+        perror("No start from emitter");
+        return EXIT_FAILURE;
+    }
+    resultArray = gpio_Mem_Chip_To_Chip_Reader(transceiver, &resultSize);
+    if (resultArray == NULL) {
+        perror("Result array is null");
+        return EXIT_FAILURE;
+    }
+    print_Formatted_Data(resultArray, resultSize);
+
+    free(resultArray);
     disable_gpio_clock();
     usleep(10);
     gpio_Mem_Unmap(fd);
@@ -492,15 +531,14 @@ int gpio_Mem_Chip_To_Chip_Writer(CustomMemTransceiver transceiver, int *writable
         perror("Transmission request timed out, no response from receiver");
         return -1;
     }
-    gpio_Mem_Transceiver_Send_Data(transceiver, (__uint32_t) gpio_Mem_Shift_Data(transceiver,
-                                                                                 (uint32_t) writableDataArraySize),
+    gpio_Mem_Transceiver_Send_Data(transceiver,
+                                   (__uint32_t) gpio_Mem_Shift_Data(transceiver, (uint32_t) writableDataArraySize),
                                    TC_LOW);
     gpio_Mem_Wait_For_Value(transceiver, RC_LOW, timeOutPointer);
     if (*timeOutPointer != 0) {
         perror("Transmission of the size timed out, no response from receiver");
         return -1;
     }
-
     int index;
     for (index = 0; index < writableDataArraySize; ++index) {
         gpio_Mem_Transceiver_Send_Data(transceiver, (__uint32_t) writableDataArray[index], tcState);
@@ -512,12 +550,62 @@ int gpio_Mem_Chip_To_Chip_Writer(CustomMemTransceiver transceiver, int *writable
         }
         tcState = !tcState;
     }
-
-
-
     // Reset state of Tc
     gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
     return 0;
+}
+
+/**
+ * Reader for device to device communication
+ * This function must be started after a communication request as been read (typically a Rc High state)
+ * Start by a acknowledgement of the communication request
+ * Then wait for the number of data the emitter will transmit
+ * Allocate memory in consequence
+ * Do not forget to this memory later
+ *
+ * @param transceiver Data structure containing all ports informations
+ * @param resultArraySize Size of the array received from the emitter
+ * @return The received data array received from the emitter
+ */
+__uint32_t *gpio_Mem_Chip_To_Chip_Reader(CustomMemTransceiver transceiver, __uint32_t *resultArraySize) {
+    int timeOutFlagValue = 0;
+    int *timeOutPointer = &timeOutFlagValue;
+    int tcState = TC_HIGH;
+
+    // Acknowledgement of the transmission request
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_HIGH);
+
+    // While waiting for response generate the mask
+    __uint32_t mask = gpio_Reading_Mask_From_Transceiver(transceiver);
+
+    __uint32_t valueRead = gpio_Mem_Wait_For_Value(transceiver, RC_LOW, timeOutPointer);
+    if (*timeOutPointer != 0) {
+        perror("Transmission validation timed out, no response from emitter");
+        return NULL;
+    }
+    // Obtain the number of time the emitter will transmit data
+    *resultArraySize = gpio_Mem_Unshift_Data(transceiver, (valueRead & mask));
+
+    // Instantiation of the array
+    __uint32_t *readArray = malloc(*resultArraySize * sizeof(int));
+
+    // Confirmation of ready to send state
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
+    int index = 0;
+    for (index = 0; index < *resultArraySize; ++index) {
+        valueRead = gpio_Mem_Wait_For_Value(transceiver, tcState, timeOutPointer);
+        if (*timeOutPointer != 0) {
+            perror("Transmission reception timed out, no response from emitter");
+            return NULL;
+        }
+        gpio_Mem_Transceiver_Send_Data(transceiver, 0, tcState);
+        // Partial unmarshalling of the data
+        readArray[index] = gpio_Mem_Unshift_Data(transceiver, (valueRead & mask));
+        tcState = !tcState;
+    }
+    // Reset the state at the end
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
+    return readArray;
 }
 
 /**
@@ -620,7 +708,7 @@ int *gpio_Mem_Formatting_Integer_Data(CustomMemTransceiver transceiver, const ui
     return usableDataArray;
 }
 
-void print_Formatted_Data(const int *dataArray, int dataSize) {
+void print_Formatted_Data(__uint32_t *dataArray, int dataSize) {
     int index;
     for (index = 0; index < dataSize; index++) {
         printf("%x\r\n", dataArray[index]);
@@ -703,7 +791,7 @@ __uint32_t gpio_Mem_Unshift_Data(CustomMemTransceiver transceiver, __uint32_t da
  * @param transceiver Transceiver responsible for the communication
  * @param value Value to wait for
  * @param timeOutFlag If this function hit timeOut will be put to 1
- * @return return the value read on the transceiver RO bank, if timeOut 0 is returned do not use this as timeOut check, use the flag pointer
+ * @return return the value read on the transceiver RO register, if timeOut 0 is returned do not use this as timeOut check, use the flag pointer
  */
 uint32_t gpio_Mem_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag) {
     uint32_t readValue = gpio_Mem_Read_Bank(transceiver.bank);
