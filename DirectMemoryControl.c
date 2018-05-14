@@ -687,7 +687,12 @@ __uint32_t gpio_Mem_Unshift_Data(CustomMemTransceiver transceiver, __uint32_t da
  */
 uint32_t gpio_Mem_Wait_For_Value(CustomMemTransceiver transceiver, int value, int *timeOutFlag) {
     uint32_t readValue = gpio_Mem_Read_Bank(transceiver.bank);
-    uint32_t maskedValue = readValue & (1u << transceiver.rc_Port);
+    uint32_t maskedValue;
+    if (transceiver.bank == 2)
+        maskedValue = readValue & (1u << transceiver.rc_Port);
+    else
+        maskedValue = readValue & (1u << (transceiver.rc_Port - PIN_NUMBER_PER_BANK));
+
     maskedValue = (uint32_t) (maskedValue != 0);
     if (maskedValue == value)
         return readValue;
@@ -697,7 +702,11 @@ uint32_t gpio_Mem_Wait_For_Value(CustomMemTransceiver transceiver, int value, in
         while (timeOutTimer < TIMEOUT_MAX_COUNT) {
             usleep(delay);
             readValue = gpio_Mem_Read_Bank(transceiver.bank);
-            maskedValue = readValue & (1u << transceiver.rc_Port);
+            if (transceiver.bank == 2)
+                maskedValue = readValue & (1u << transceiver.rc_Port);
+            else
+                maskedValue = readValue & (1u << (transceiver.rc_Port - PIN_NUMBER_PER_BANK));
+
             maskedValue = (uint32_t) (maskedValue != 0);
             if (maskedValue == value)
                 return readValue;
@@ -895,7 +904,7 @@ void gpio_Mem_Protocol_Reader() {
     int flag = 0;
     __uint32_t resultSize = 0;
     __uint32_t *resultArray;
-    printf("Waiting for HIGH on port 32\n");
+    printf("Waiting for HIGH on port %d\n", transceiver.rc_Port);
     gpio_Mem_Wait_For_Value(transceiver, RC_HIGH, &flag);
     if (flag != 0) {
         perror("No start from emitter");
