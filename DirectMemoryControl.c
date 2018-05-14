@@ -104,9 +104,16 @@ uint32_t gpio_Mem_Wait_For_Value(CustomMemTransceiver transceiver, int value, in
 
 int gpio_Mem_Transceiver_Send_Data(CustomMemTransceiver transceiver, __uint32_t value, int tcState);
 
+void gpio_Mem_CleanUp(int fd, int bank);
+
 void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay);
 
 void gpio_mem_multiple_speed_test(int nbTest, int internalRepetition, int delay);
+
+void gpio_Mem_Protocol_Reader();
+
+void gpio_Mem_Protocol_Writer();
+
 
 // TODO make it local
 volatile unsigned int *g_CLOCK_ADDRESS;
@@ -114,123 +121,8 @@ volatile void *g_MEMORY_MAP;
 
 int main(int argc, char *argv[]) {
 
-//
-//    int port = 32;
-//    int fd = gpio_Mem_Map();
-//    open_Amba_clk();
-//    usleep(100);
-//    enable_gpio_clock();
-//    gpio_Mem_Set_Data_Direction(port, GPIO_OUT);
-//    usleep(100);
-//    //while(1){
-//    gpio_Mem_Write(port, 1);
-//    usleep(1);
-//    //}
-//    usleep(100);
-//    disable_gpio_clock();
-//    gpio_Mem_Unmap(fd);
-
-
-
-//    CustomMemTransceiver transceiver;
-//    int pinPort[7] = {18, 17, 16, 15, 14, 13, 12};
-//    transceiver.pins_Ports = pinPort;
-//    transceiver.nb_Data_Pins = 7;
-//    transceiver.tc_Port = -1;
-//    transceiver.rc_Port = 11;
-//    transceiver.bank = 2;
-//
-//    uint32_t mask = gpio_Reading_Mask_From_Transceiver(transceiver);
-//    printf("Mask : %x\r\n", mask);
-//
-//    int fd = gpio_Mem_Map();
-//    open_Amba_clk();
-//    usleep(100);
-//    enable_gpio_clock();
-//    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_IN);
-//    usleep(100);
-//    unsigned int result, maskedResult;
-//    int index;
-//    int valueToWait = 1;
-//    int *flag = malloc(sizeof(int));
-//    *flag = 0;
-//    for (index = 0; index < 10; index++) {
-//        result = gpio_Mem_Wait_For_Value(transceiver, valueToWait, flag);
-//        printf("Result read : %u\r\n", result);
-//        maskedResult = result & mask;
-//        printf("Masked : %u\r\n", maskedResult);
-//        maskedResult = gpio_Mem_Unshift_Data(transceiver, maskedResult);
-//        printf("Shifted : %u\r\n", maskedResult);
-//        valueToWait = !valueToWait;
-//    }
-//
-//    free(flag);
-//    disable_gpio_clock();
-//    usleep(10);
-//    gpio_Mem_Unmap(fd);
-
-    /*
-    CustomMemTransceiver transceiver;
-    int pinPort[4] = {10, 9, 8, 7};
-    transceiver.pins_Ports = pinPort;
-    transceiver.nb_Data_Pins = 4;
-    transceiver.tc_Port = -1;
-    transceiver.rc_Port = 11;
-    transceiver.bank = 2;
-
-    __uint32_t data[5] = {2u, 4u, 5u, 7u, 8u};
-    int *printableData = gpio_Mem_Formatting_Integer_Data(transceiver, data, 5);
-    int fd = gpio_Mem_Map();
-    open_Amba_clk();
-    usleep(100);
-    enable_gpio_clock();
-    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_OUT);
-    usleep(100);
-
-    gpio_Mem_Chip_To_Chip_Writer(transceiver, printableData, 5);
-
-
-    free(printableData);
-    disable_gpio_clock();
-    usleep(10);
-    gpio_Mem_Unmap(fd);
-    */
-
-    CustomMemTransceiver transceiver;
-    int pinPort[7] = {18, 17, 16, 15, 14, 13, 12};
-    transceiver.pins_Ports = pinPort;
-    transceiver.nb_Data_Pins = 7;
-    transceiver.tc_Port = 10;
-    transceiver.rc_Port = 11;
-    transceiver.bank = 2;
-
-    int fd = gpio_Mem_Map();
-    open_Amba_clk();
-    usleep(100);
-    enable_gpio_clock();
-    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_IN);
-    usleep(100);
-
-    int flag = 0;
-    __uint32_t resultSize = 0;
-    __uint32_t *resultArray;
-    gpio_Mem_Wait_For_Value(transceiver, RC_HIGH, &flag);
-    if (flag != 0) {
-        perror("No start from emitter");
-        return EXIT_FAILURE;
-    }
-    resultArray = gpio_Mem_Chip_To_Chip_Reader(transceiver, &resultSize);
-    if (resultArray == NULL) {
-        perror("Result array is null");
-        return EXIT_FAILURE;
-    }
-    print_Formatted_Data(resultArray, resultSize);
-
-    free(resultArray);
-    disable_gpio_clock();
-    usleep(10);
-    gpio_Mem_Unmap(fd);
-
+//    gpio_Mem_Protocol_Reader();
+//    gpio_Mem_Protocol_Writer();
 
     return 0;
 }
@@ -842,6 +734,20 @@ int gpio_Mem_Transceiver_Send_Data(CustomMemTransceiver transceiver, __uint32_t 
 
 }
 
+/**
+ * Reset the value on the entire bank, disable the clock and close the memory mapping
+ * @param fd File descriptor of "/dev/mem"
+ * @param bank Bank to reset
+ */
+void gpio_Mem_CleanUp(int fd, int bank) {
+    gpio_Mem_Write_Direct_Data(bank, 0u);
+    usleep(10);
+    disable_gpio_clock();
+    usleep(10);
+    gpio_Mem_Unmap(fd);
+
+}
+
 void gpio_mem_speed_test(int nbTest, int internalRepetition, int delay) {
 
     int port = 32;
@@ -961,4 +867,78 @@ void gpio_mem_multiple_speed_test(int nbTest, int internalRepetition, int delay)
 
     double frequency = ((double) 1.00 / period) * 1000000;
     printf("Average frequency is : %lf Hz\r\n", frequency);
+}
+
+void gpio_Mem_Protocol_Reader() {
+
+    CustomMemTransceiver transceiver;
+    int pinPort[6] = {39, 38, 37, 36, 35, 34};
+    transceiver.pins_Ports = pinPort;
+    transceiver.nb_Data_Pins = 6;
+    transceiver.tc_Port = 33;
+    transceiver.rc_Port = 32;
+    transceiver.bank = 3;
+
+    __uint32_t mask = gpio_Reading_Mask_From_Transceiver(transceiver);
+    printf("mask : %x\n", mask);
+
+    int fd = gpio_Mem_Map();
+    open_Amba_clk();
+    usleep(100);
+    enable_gpio_clock();
+    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_IN);
+    usleep(100);
+
+    printf("reset\n");
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, 0);
+    usleep(100);
+    int flag = 0;
+    __uint32_t resultSize = 0;
+    __uint32_t *resultArray;
+    printf("Waiting for HIGH on port 32\n");
+    gpio_Mem_Wait_For_Value(transceiver, RC_HIGH, &flag);
+    if (flag != 0) {
+        perror("No start from emitter");
+        gpio_Mem_CleanUp(fd, transceiver.bank);
+        return;
+    }
+    printf("Starting to listen\n");
+    resultArray = gpio_Mem_Chip_To_Chip_Reader(transceiver, &resultSize);
+    if (resultArray == NULL) {
+        perror("Result array is null");
+        free(resultArray);
+        gpio_Mem_CleanUp(fd, transceiver.bank);
+        return;
+    }
+    print_Formatted_Data(resultArray, resultSize);
+    free(resultArray);
+    gpio_Mem_CleanUp(fd, transceiver.bank);
+}
+
+void gpio_Mem_Protocol_Writer() {
+    CustomMemTransceiver transceiver;
+    int pinPort[6] = {31, 30, 29, 28, 27, 26};
+    transceiver.pins_Ports = pinPort;
+    transceiver.nb_Data_Pins = 6;
+    transceiver.tc_Port = 24;
+    transceiver.rc_Port = 25;
+    transceiver.bank = 2;
+
+    __uint32_t data[5] = {2u, 4u, 5u, 7u, 8u};
+    int *printableData = gpio_Mem_Formatting_Integer_Data(transceiver, data, 5);
+    int fd = gpio_Mem_Map();
+    open_Amba_clk();
+    usleep(100);
+    enable_gpio_clock();
+    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_OUT);
+    usleep(100);
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
+    printf("Reset\r\n");
+    if (gpio_Mem_Chip_To_Chip_Writer(transceiver, printableData, 5) < 0) {
+        perror("Writing function failed");
+    }
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
+    free(printableData);
+    gpio_Mem_CleanUp(fd, transceiver.bank);
+
 }
