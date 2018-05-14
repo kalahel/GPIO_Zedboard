@@ -495,6 +495,8 @@ __uint32_t *gpio_Mem_Chip_To_Chip_Reader(CustomMemTransceiver transceiver, __uin
         readArray[index] = gpio_Mem_Unshift_Data(transceiver, (valueRead & mask));
         tcState = !tcState;
     }
+    // TODO check waiting function in writer to reduce this time
+    usleep(10000);
     // Reset the state at the end
     gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
     return readArray;
@@ -917,8 +919,11 @@ void gpio_Mem_Protocol_Reader() {
     int flag = 0;
     __uint32_t resultSize = 0;
     __uint32_t *resultArray;
+    struct timeval tv, tv2;
     printf("Waiting for HIGH on port %d\n", transceiver.rc_Port);
     gpio_Mem_Wait_For_Value(transceiver, RC_HIGH, &flag);
+    // Start of time measuring
+    gettimeofday(&tv, NULL);
     if (flag != 0) {
         perror("No start from emitter");
         gpio_Mem_CleanUp(fd, transceiver.bank);
@@ -932,6 +937,15 @@ void gpio_Mem_Protocol_Reader() {
         gpio_Mem_CleanUp(fd, transceiver.bank);
         return;
     }
+    gettimeofday(&tv2, NULL);
+    double testResult = (double) (tv2.tv_sec * 1000000 + tv2.tv_usec) - (double) (tv.tv_sec * 1000000 + tv.tv_usec);
+    printf("Time for reception measured is : %lf us\r\n", testResult);
+
+    double period = testResult / 63;
+    printf("Average period is : %lf us\r\n", period);
+
+    double frequency = ((double) 1.00 / period) * 1000000;
+    printf("Average frequency is : %lf Hz\r\n", frequency);
     print_Formatted_Data(resultArray, resultSize);
     free(resultArray);
     gpio_Mem_CleanUp(fd, transceiver.bank);
@@ -946,8 +960,14 @@ void gpio_Mem_Protocol_Writer() {
     transceiver.rc_Port = 25;
     transceiver.bank = 2;
 
-    __uint32_t data[5] = {2u, 4u, 5u, 7u, 8u};
-    int *printableData = gpio_Mem_Formatting_Integer_Data(transceiver, data, 5);
+//    __uint32_t data[5] = {2u, 4u, 5u, 7u, 8u};
+//    int *printableData = gpio_Mem_Formatting_Integer_Data(transceiver, data, 5);
+
+    __uint32_t data[63] = {0};
+    for (int i = 0; i < 63; ++i) {
+        data[i] = (__uint32_t) i;
+    }
+    int *printableData = gpio_Mem_Formatting_Integer_Data(transceiver, data, 63);
     int fd = gpio_Mem_Map();
     open_Amba_clk();
     usleep(100);
@@ -956,7 +976,7 @@ void gpio_Mem_Protocol_Writer() {
     usleep(100);
     gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
     printf("Reset\r\n");
-    if (gpio_Mem_Chip_To_Chip_Writer(transceiver, printableData, 5) < 0) {
+    if (gpio_Mem_Chip_To_Chip_Writer(transceiver, printableData, 63) < 0) {
         perror("Writing function failed");
     }
     gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
