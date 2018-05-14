@@ -630,7 +630,10 @@ __uint32_t gpio_Reading_Mask_From_Transceiver(CustomMemTransceiver transceiver) 
     int index;
     __uint32_t mask = 0;
     for (index = 0; index < transceiver.nb_Data_Pins; index++) {
-        mask |= (1u << transceiver.pins_Ports[index]);
+        if (transceiver.bank == 2)
+            mask |= (1u << transceiver.pins_Ports[index]);
+        else
+            mask |= (1u << (transceiver.pins_Ports[index] - PIN_NUMBER_PER_BANK));
     }
     return mask;
 }
@@ -733,25 +736,35 @@ uint32_t gpio_Mem_Wait_For_Value(CustomMemTransceiver transceiver, int value, in
  * @return The result of gpio_Mem_Write_Direct_Data
  */
 int gpio_Mem_Transceiver_Send_Data(CustomMemTransceiver transceiver, __uint32_t value, int tcState) {
-
-    if (tcState == 0) {
-        value &= ~(1u << transceiver.tc_Port);
+    if (transceiver.bank == 2) {
+        if (tcState == 0) {
+            value &= ~(1u << transceiver.tc_Port);
+        } else {
+            value |= (1u << transceiver.tc_Port);
+        }
     } else {
-        value |= (1u << transceiver.tc_Port);
+        if (tcState == 0) {
+            value &= ~(1u << (transceiver.tc_Port - PIN_NUMBER_PER_BANK));
+        } else {
+            value |= (1u << (transceiver.tc_Port - PIN_NUMBER_PER_BANK));
+        }
     }
+
     return gpio_Mem_Write_Direct_Data(transceiver.bank, value);
 
 }
 
 /**
  * Reset the value on the entire bank, disable the clock and close the memory mapping
+ * Note disabling gpio clock prevent other process to use gpio
+ *
  * @param fd File descriptor of "/dev/mem"
  * @param bank Bank to reset
  */
 void gpio_Mem_CleanUp(int fd, int bank) {
     gpio_Mem_Write_Direct_Data(bank, 0u);
     usleep(10);
-    disable_gpio_clock();
+//    disable_gpio_clock();
     usleep(10);
     gpio_Mem_Unmap(fd);
 
