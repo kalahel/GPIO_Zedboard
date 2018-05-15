@@ -114,6 +114,8 @@ void gpio_Mem_Protocol_Reader();
 
 void gpio_Mem_Protocol_Writer();
 
+uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t dataSize, size_t *returnedDataSize);
+
 
 // TODO make it local
 volatile unsigned int *g_CLOCK_ADDRESS;
@@ -121,9 +123,17 @@ volatile void *g_MEMORY_MAP;
 
 int main(int argc, char *argv[]) {
 
-//    gpio_Mem_Protocol_Reader();
-//    gpio_Mem_Protocol_Writer();
+    CustomMemTransceiver transceiver;
+    transceiver.nb_Data_Pins = 4;
+    size_t returnedDataSize = 0;
+    int data[8] = {0xf, 0xa, 0xb, 0xc, 0, 1, 1, 8};
 
+    uint32_t *returnedData = gpio_Unmarshall(transceiver, data, 8, &returnedDataSize);
+
+    uint32_t value = 0xffffffff;
+    value = value >> 31;
+    printf("Returned data size : %x\r\n", returnedDataSize);
+    printf("First value : %x\r\n", returnedData[0]);
     return 0;
 }
 
@@ -951,6 +961,7 @@ void gpio_Mem_Protocol_Reader() {
     gpio_Mem_CleanUp(fd, transceiver.bank);
 }
 
+
 void gpio_Mem_Protocol_Writer() {
     CustomMemTransceiver transceiver;
     int pinPort[6] = {31, 30, 29, 28, 27, 26};
@@ -983,4 +994,80 @@ void gpio_Mem_Protocol_Writer() {
     free(printableData);
     gpio_Mem_CleanUp(fd, transceiver.bank);
 
+}
+
+/**
+ * Convert received data to 32 bits values according to the number of data pins in use
+ * Will read all the data array, adding values found to current 32 bits number
+ *
+ * @param transceiver Transceiver containing all the port informations
+ * @param data Data received from another board using a trasnceiver structure
+ * @param dataSize Size of the data array
+ * @param returnedDataSize Size of the returned unmarshalled array
+ * @return Unmarshalled 32 bits value array
+ */
+uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t dataSize, size_t *returnedDataSize) {
+
+    int numberOfReadingPerWord;
+    // If you can not divide 32 by the number of data pins
+    if (32u % transceiver.nb_Data_Pins) {
+        numberOfReadingPerWord = 32u / transceiver.nb_Data_Pins + 1;
+    } else {
+        numberOfReadingPerWord = 32u / transceiver.nb_Data_Pins;
+    }
+
+    printf("Number of reading per word : %d\n", numberOfReadingPerWord);
+
+    size_t numberOfDataBits = dataSize * transceiver.nb_Data_Pins;
+    // If total number of bit is not divisible by 32
+    if (32u % numberOfDataBits) {
+        *returnedDataSize = (numberOfDataBits / 32u) + 1;
+    } else {
+        *returnedDataSize = (numberOfDataBits / 32u);
+    }
+    // TODO CHECK WHEN WORDS ARE COMPLETED
+    // Array memory allocation
+    uint32_t *unmarshalledData = malloc(*returnedDataSize * sizeof(uint32_t));
+    int lastingBits = 32;
+    uint32_t mainValue = 0;
+    uint32_t truncatedValue = 0;
+    int overflowFlag = 0;
+    int difference;
+    int resultArrayIndex = 0;
+    int invertedReadingIndex = numberOfReadingPerWord - 1;
+    for (int i = 0; i < dataSize; ++i) {
+        difference = transceiver.nb_Data_Pins - lastingBits;
+        // Overflow of data
+        // 2 truncated words sharing same portion (array space)
+        if (lastingBits < transceiver.nb_Data_Pins) {
+            overflowFlag = 1;
+            mainValue += data[i] >> (difference);
+            // Masking to keep only the least significant part of the word
+            // mask = pow(2, difference) - 1;
+            truncatedValue = data[i] & (0xffffffffu >> lastingBits);
+            lastingBits = 32 - difference;
+            // The word is complete
+            unmarshalledData[resultArrayIndex] = mainValue;
+            resultArrayIndex++;
+        }
+            // Only one part of a word on this portion
+        else {
+            mainValue += ((uint32_t ) data[i]) << (invertedReadingIndex * transceiver.nb_Data_Pins);
+            invertedReadingIndex--;
+            if (overflowFlag) {
+                // TODO HANDLE SHIFTING FOR TRUNCATED VALUE
+                mainValue += truncatedValue;
+                truncatedValue = 0;
+                overflowFlag = 0;
+            }
+            lastingBits -= transceiver.nb_Data_Pins;
+            // The word is complete
+            if (lastingBits == 0) {
+                unmarshalledData[resultArrayIndex] = mainValue;
+                resultArrayIndex++;
+                invertedReadingIndex = numberOfReadingPerWord;
+            }
+        }
+    }
+    return unmarshalledData;
 }
