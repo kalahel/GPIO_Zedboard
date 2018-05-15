@@ -124,9 +124,9 @@ volatile void *g_MEMORY_MAP;
 int main(int argc, char *argv[]) {
 
     CustomMemTransceiver transceiver;
-    transceiver.nb_Data_Pins = 4;
+    transceiver.nb_Data_Pins = 6;
     size_t returnedDataSize = 0;
-    int data[8] = {0xf, 0xa, 0xb, 0xc, 0, 1, 1, 8};
+    int data[8] = {0, 0, 0, 0, 1, 0, 0, 0};
 
     uint32_t *returnedData = gpio_Unmarshall(transceiver, data, 8, &returnedDataSize);
 
@@ -134,6 +134,8 @@ int main(int argc, char *argv[]) {
     value = value >> 31;
     printf("Returned data size : %x\r\n", returnedDataSize);
     printf("First value : %x\r\n", returnedData[0]);
+
+
     return 0;
 }
 
@@ -1009,12 +1011,7 @@ void gpio_Mem_Protocol_Writer() {
 uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t dataSize, size_t *returnedDataSize) {
 
     int numberOfReadingPerWord;
-    // If you can not divide 32 by the number of data pins
-    if (32u % transceiver.nb_Data_Pins) {
-        numberOfReadingPerWord = 32u / transceiver.nb_Data_Pins + 1;
-    } else {
-        numberOfReadingPerWord = 32u / transceiver.nb_Data_Pins;
-    }
+    numberOfReadingPerWord = 32u / transceiver.nb_Data_Pins;
 
     printf("Number of reading per word : %d\n", numberOfReadingPerWord);
 
@@ -1035,6 +1032,8 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
     int difference;
     int resultArrayIndex = 0;
     int invertedReadingIndex = numberOfReadingPerWord - 1;
+    // Number of bits that will overflow
+    int offset = 32u % transceiver.nb_Data_Pins;
     for (int i = 0; i < dataSize; ++i) {
         difference = transceiver.nb_Data_Pins - lastingBits;
         // Overflow of data
@@ -1046,26 +1045,32 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
             // mask = pow(2, difference) - 1;
             truncatedValue = data[i] & (0xffffffffu >> lastingBits);
             lastingBits = 32 - difference;
+            // Updating number of bits that will overflow
+            offset = lastingBits % transceiver.nb_Data_Pins;
+            invertedReadingIndex = numberOfReadingPerWord - 1;
+
             // The word is complete
             unmarshalledData[resultArrayIndex] = mainValue;
             resultArrayIndex++;
         }
             // Only one part of a word on this portion
         else {
-            mainValue += ((uint32_t ) data[i]) << (invertedReadingIndex * transceiver.nb_Data_Pins);
-            invertedReadingIndex--;
+            // Handle the truncated starting part of a word
             if (overflowFlag) {
                 // TODO HANDLE SHIFTING FOR TRUNCATED VALUE
-                mainValue += truncatedValue;
+                mainValue += truncatedValue << ((invertedReadingIndex * transceiver.nb_Data_Pins) + offset);
                 truncatedValue = 0;
                 overflowFlag = 0;
             }
+            mainValue += ((uint32_t) data[i]) << ((invertedReadingIndex * transceiver.nb_Data_Pins) + offset);
+            invertedReadingIndex--;
+
             lastingBits -= transceiver.nb_Data_Pins;
             // The word is complete
             if (lastingBits == 0) {
                 unmarshalledData[resultArrayIndex] = mainValue;
                 resultArrayIndex++;
-                invertedReadingIndex = numberOfReadingPerWord;
+                invertedReadingIndex = numberOfReadingPerWord - 1;
             }
         }
     }
