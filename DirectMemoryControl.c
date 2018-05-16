@@ -126,9 +126,9 @@ int main(int argc, char *argv[]) {
     CustomMemTransceiver transceiver;
     transceiver.nb_Data_Pins = 6;
     size_t returnedDataSize = 0;
-    int data[11] = {0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0, 0, 0b111100};
+    int data[12] = {0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0, 0, 0b111100, 12};
 
-    uint32_t *returnedData = gpio_Unmarshall(transceiver, data, 11, &returnedDataSize);
+    uint32_t *returnedData = gpio_Unmarshall(transceiver, data, 12, &returnedDataSize);
 
 
     printf("Returned data size : %x\r\n", returnedDataSize);
@@ -1017,12 +1017,13 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
 
     size_t numberOfDataBits = dataSize * transceiver.nb_Data_Pins;
     // If total number of bit is not divisible by 32
-    if (32u % numberOfDataBits) {
-        *returnedDataSize = (numberOfDataBits / 32u) + 1;
-    } else {
-        *returnedDataSize = (numberOfDataBits / 32u);
-    }
-    // TODO CHECK WHEN WORDS ARE COMPLETED
+//    if (32u % numberOfDataBits) {
+//        *returnedDataSize = (numberOfDataBits / 32u) + 1;
+//    } else {
+    // Discard remaining data that do not form a word
+    *returnedDataSize = (numberOfDataBits / 32u);
+//    }
+
     // Array memory allocation
     uint32_t *unmarshalledData = malloc(*returnedDataSize * sizeof(uint32_t));
     int lastingBits = 32;
