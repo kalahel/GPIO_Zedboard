@@ -126,14 +126,14 @@ int main(int argc, char *argv[]) {
     CustomMemTransceiver transceiver;
     transceiver.nb_Data_Pins = 6;
     size_t returnedDataSize = 0;
-    int data[8] = {0, 0, 0, 0, 1, 0, 0, 0};
+    int data[11] = {0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0, 0, 0b111100};
 
-    uint32_t *returnedData = gpio_Unmarshall(transceiver, data, 8, &returnedDataSize);
+    uint32_t *returnedData = gpio_Unmarshall(transceiver, data, 11, &returnedDataSize);
 
-    uint32_t value = 0xffffffff;
-    value = value >> 31;
+
     printf("Returned data size : %x\r\n", returnedDataSize);
     printf("First value : %x\r\n", returnedData[0]);
+    printf("Second value : %x\r\n", returnedData[1]);
 
 
     return 0;
@@ -1051,6 +1051,7 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
 
             // The word is complete
             unmarshalledData[resultArrayIndex] = mainValue;
+            mainValue = 0;
             resultArrayIndex++;
         }
             // Only one part of a word on this portion
@@ -1061,6 +1062,7 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
                 mainValue += truncatedValue << ((invertedReadingIndex * transceiver.nb_Data_Pins) + offset);
                 truncatedValue = 0;
                 overflowFlag = 0;
+                invertedReadingIndex--;
             }
             mainValue += ((uint32_t) data[i]) << ((invertedReadingIndex * transceiver.nb_Data_Pins) + offset);
             invertedReadingIndex--;
@@ -1071,6 +1073,7 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
                 unmarshalledData[resultArrayIndex] = mainValue;
                 resultArrayIndex++;
                 invertedReadingIndex = numberOfReadingPerWord - 1;
+                mainValue = 0;
             }
         }
     }
