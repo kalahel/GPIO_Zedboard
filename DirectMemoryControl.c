@@ -118,43 +118,38 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
 
 uint32_t *gpio_Marshall(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize, size_t *returnedDataSize);
 
+int gpio_Marshall_Unmarshall_Validity_Check(int nbDataPins);
+
 // TODO make it local
 volatile unsigned int *g_CLOCK_ADDRESS;
 volatile void *g_MEMORY_MAP;
 
 int main(int argc, char *argv[]) {
 
-    CustomMemTransceiver transceiver;
-    transceiver.nb_Data_Pins = 6;
-    size_t returnedDataSize = 0;
-    int data[12] = {0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0, 0, 0b111100, 12};
-
-    uint32_t *returnedData = gpio_Unmarshall(transceiver, data, 12, &returnedDataSize);
-
-
-    printf("Returned data size : %x\r\n", returnedDataSize);
-    printf("First value : %x\r\n", returnedData[0]);
-    printf("Second value : %x\r\n", returnedData[1]);
-
-    uint32_t dataToMashall[4] = {7, 0xff, 0x22, 0xf};
-    CustomMemTransceiver transceiver2;
-    transceiver2.nb_Data_Pins = 6;
-    size_t returnedDataSize2 = 0;
-    uint32_t *marshalledData = gpio_Marshall(transceiver2, dataToMashall, 4, &returnedDataSize2);
-    printf("\n\nReturned mashalled data size : %d\n", returnedDataSize2);
-    for (int i = 0; i < returnedDataSize2; ++i) {
-        printf("Value %d : %x \n", i, marshalledData[i]);
-    }
-
-    size_t finalSize;
-    uint32_t *finalResult = gpio_Unmarshall(transceiver2, (int *) marshalledData, returnedDataSize2, &finalSize);
-    printf("\n\n");
-    for (int j = 0; j < finalSize; ++j) {
-        printf("Returned Umarshaled Value : %x\n",finalResult[j]);
-    }
-
-    free(marshalledData);
-    free(returnedData);
+//    CustomMemTransceiver transceiver;
+//    transceiver.nb_Data_Pins = 6;
+//    size_t returnedDataSize = 0;
+//    int data[12] = {0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0, 0, 0b111100, 12};
+//
+//    uint32_t *returnedData = gpio_Unmarshall(transceiver, data, 12, &returnedDataSize);
+//
+//
+//    printf("Returned data size : %x\r\n", returnedDataSize);
+//    printf("First value : %x\r\n", returnedData[0]);
+//    printf("Second value : %x\r\n", returnedData[1]);
+//    int notMatchingPinsNumber[32] = {0};
+//    int j = 0;
+//    for (int i = 1; i < 33; ++i) {
+//        if (gpio_Marshall_Unmarshall_Validity_Check(i) < 0) {
+//            notMatchingPinsNumber[j] = i;
+//            j++;
+//        }
+//    }
+//    printf("\nNot matching pin number :\n");
+//    for (int k = 0; k < j; ++k) {
+//        printf("%d,", notMatchingPinsNumber[k]);
+//    }
+    gpio_Marshall_Unmarshall_Validity_Check(3);
     return 0;
 }
 
@@ -1028,17 +1023,21 @@ void gpio_Mem_Protocol_Writer() {
  * @return Unmarshalled 32 bits value array
  */
 uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t dataSize, size_t *returnedDataSize) {
+//    printf("\n\n\t\t**UNMARSHALLING **\n\n");
 
     int numberOfReadingPerWord;
     numberOfReadingPerWord = 32u / transceiver.nb_Data_Pins;
+//    printf("Number Of reading per word : %d\n", numberOfReadingPerWord);
 
     size_t numberOfDataBits = dataSize * transceiver.nb_Data_Pins;
+//    printf("Number of data bits : %d\n", numberOfDataBits);
     // If total number of bit is not divisible by 32
 //    if (32u % numberOfDataBits) {
 //        *returnedDataSize = (numberOfDataBits / 32u) + 1;
 //    } else {
     // Discard remaining data that do not form a word
     *returnedDataSize = (numberOfDataBits / 32u);
+//    printf("Returned data size : %d\n", *returnedDataSize);
 //    }
 
     // Array memory allocation
@@ -1050,12 +1049,15 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
     int difference;
     int resultArrayIndex = 0;
     int invertedReadingIndex = numberOfReadingPerWord - 1;
+//    printf("Inverted reading index : %d\n", invertedReadingIndex);
     // Number of bits that will overflow
     int offset = 32u % transceiver.nb_Data_Pins;
     for (int i = 0; i < dataSize; ++i) {
         difference = transceiver.nb_Data_Pins - lastingBits;
         // Overflow of data
         // 2 truncated words sharing same portion (array space)
+//        printf("Data[%d] : 0x%x\n", i, data[i]);
+
         if (lastingBits < transceiver.nb_Data_Pins) {
             overflowFlag = 1;
             mainValue += data[i] >> (difference);
@@ -1091,6 +1093,7 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
                 unmarshalledData[resultArrayIndex] = mainValue;
                 resultArrayIndex++;
                 invertedReadingIndex = numberOfReadingPerWord - 1;
+                lastingBits = 32u;
                 mainValue = 0;
             }
         }
@@ -1103,10 +1106,15 @@ uint32_t *gpio_Marshall(CustomMemTransceiver transceiver, uint32_t *data, size_t
     int numberOfWritingPerWord;
     numberOfWritingPerWord = 32u / transceiver.nb_Data_Pins;
     // We need to create one more array space in case of overflow
-    if (32u % transceiver.nb_Data_Pins)
-        *returnedDataSize = dataSize * numberOfWritingPerWord + 1;
-    else
-        *returnedDataSize = dataSize * numberOfWritingPerWord;
+    if ((32u * dataSize) % transceiver.nb_Data_Pins) {
+//        *returnedDataSize = dataSize * numberOfWritingPerWord + 1;
+        // TODO check if necessary
+        *returnedDataSize = (dataSize * 32) / transceiver.nb_Data_Pins + 1;
+    } else {
+//        *returnedDataSize = dataSize * numberOfWritingPerWord;
+        *returnedDataSize = (dataSize * 32) / transceiver.nb_Data_Pins;
+    }
+
     // Array memory allocation
     uint32_t *marshalledData = malloc(*returnedDataSize * sizeof(uint32_t));
     int remainingBits = 32;
@@ -1114,45 +1122,89 @@ uint32_t *gpio_Marshall(CustomMemTransceiver transceiver, uint32_t *data, size_t
     uint32_t mask = 0xffffffff >> (32 - transceiver.nb_Data_Pins);
     uint32_t valueToStore = 0;
     uint32_t overflowedValue = 0;
-    int offset = 0;
+    int numberSharedBitsStrong = 0;
     int precedingOffset = 0;
     int overflowFlag = 0;
+    int generalIndex = 0;
 
     for (int index = 0; index < dataSize; ++index) {
         // Decrementing loop, storing chunk by chunk in a one dimensional array
-        offset = (32 + offset) % transceiver.nb_Data_Pins;
-        for (int leftToWrite = numberOfWritingPerWord - 1, internalIndex = 0;
-             leftToWrite >= 0; --leftToWrite, ++internalIndex) {
-            valueToStore = data[index] >> (leftToWrite * transceiver.nb_Data_Pins + offset);
+//        numberSharedBitsStrong = (32 - numberSharedBitsStrong) % transceiver.nb_Data_Pins;
+        numberSharedBitsStrong = remainingBits % transceiver.nb_Data_Pins;
+        // If the precedent value overflowed we need to write one more for the next value
+        for (int leftToWrite = numberOfWritingPerWord - 1 + (overflowFlag != 0), internalIndex = 0;
+             leftToWrite >= 0; --leftToWrite, ++internalIndex, ++generalIndex) {
+            valueToStore = data[index] >> (leftToWrite * transceiver.nb_Data_Pins + numberSharedBitsStrong);
             // Index shifting by the index of the word that is actually marshalled, time the number of writting necessary for a word
             if (overflowFlag) {
-                remainingBits -= (transceiver.nb_Data_Pins - precedingOffset);
+//                remainingBits -= (transceiver.nb_Data_Pins - precedingOffset);
                 valueToStore += overflowedValue;
                 overflowFlag = 0;
-                printf("OVERFLOWED\n");
             } else {
                 remainingBits -= transceiver.nb_Data_Pins;
             }
-            marshalledData[(index * numberOfWritingPerWord) + internalIndex] = valueToStore & mask;
+//            marshalledData[(index * numberOfWritingPerWord) + internalIndex] = valueToStore & mask;
+            marshalledData[generalIndex] = valueToStore & mask;
 
-            printf("Creating index : %d\t Remaining : %d\n", (index * numberOfWritingPerWord) + internalIndex,
+//            printf("Creating index : %d\t Remaining : %d\n", (index * numberOfWritingPerWord) + internalIndex,
+//                   remainingBits);
+            printf("Creating index : %d\t Remaining : %d\n", generalIndex,
                    remainingBits);
         }
         // If there is an overflow
         if (remainingBits) {
             // Mask the data to keep only the data that overflowed and will share next array space
-            overflowedValue = data[index] & (0xffffffff >> (32 - remainingBits));
+            if (index < dataSize) {
+                overflowedValue = data[index] & (0xffffffff >> (32 - remainingBits));
+            }
             // Shift the value that overflow to fit in the next array space
-            overflowedValue = overflowedValue << (transceiver.nb_Data_Pins - offset);
+            overflowedValue = overflowedValue << (transceiver.nb_Data_Pins - numberSharedBitsStrong);
+            remainingBits = 32 - (transceiver.nb_Data_Pins - numberSharedBitsStrong);
             overflowFlag = 1;
+        } else {
+            remainingBits = 32;
         }
-        remainingBits = 32;
-        precedingOffset = offset;
-        printf("Offset : %d\n", offset);
+        precedingOffset = numberSharedBitsStrong;
+//        printf("Offset : %d\n", numberSharedBitsStrong);
     }
     // Handle the last overflow
-    if(overflowFlag){
+    if (overflowFlag) {
         marshalledData[*returnedDataSize - 1] = overflowedValue & mask;
     }
     return marshalledData;
 }
+
+int gpio_Marshall_Unmarshall_Validity_Check(int nbDataPins) {
+    int returnedFlag = 0;
+    int faultSum = 0;
+    uint32_t dataToMarshall[3] = {7, 0xffffffff, 0x0};
+    CustomMemTransceiver transceiver2;
+    transceiver2.nb_Data_Pins = nbDataPins;
+    size_t returnedDataSize2 = 0;
+    uint32_t *marshalledData = gpio_Marshall(transceiver2, dataToMarshall, 3, &returnedDataSize2);
+
+
+    size_t finalSize;
+    uint32_t *finalResult = gpio_Unmarshall(transceiver2, marshalledData, returnedDataSize2, &finalSize);
+    printf("\n\n**Pins in usage : %d\n", nbDataPins);
+    for (int j = 0; j < finalSize; ++j) {
+        if (dataToMarshall[j] != finalResult[j]) {
+            printf("Returned unmarshalled result does not match, %d Data pins:\nExpected : %x\tObserved : %x\n",
+                   nbDataPins, dataToMarshall[j], finalResult[j]);
+            faultSum++;
+            returnedFlag = -1;
+        }
+    }
+    if (returnedFlag < 0) {
+        printf("Returned marshalled data size : %d\n", returnedDataSize2);
+        printf("Bad marshalling/unmarshalling : %d/%d\n", faultSum, 3);
+        for (int i = 0; i < returnedDataSize2; ++i) {
+            printf("Value %d : %x \n", i, marshalledData[i]);
+        }
+    }
+
+    free(marshalledData);
+    free(finalResult);
+    return returnedFlag;
+}
+
