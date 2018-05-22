@@ -114,9 +114,13 @@ void gpio_Mem_Protocol_Reader();
 
 void gpio_Mem_Protocol_Writer();
 
-uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t dataSize, size_t *returnedDataSize);
+void gpio_Protocol_Send(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize);
 
-uint32_t *gpio_Marshall(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize, size_t *returnedDataSize);
+uint32_t *gpio_Protocol_Receive(CustomMemTransceiver transceiver, size_t *returnedDataSize);
+
+void gpio_Protocol_Send_Test();
+
+void gpio_Protocol_Receive_Test();
 
 uint32_t *
 gpio_Marshall_Simplified(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize, size_t *returnedDataSize);
@@ -630,6 +634,7 @@ gpio_Mem_Formatting_Binary_Data(CustomMemTransceiver transceiver, const int *dat
  * @param dataSize Size of the data array
  * @return Pointer to the writable data array
  */
+// TODO CHANGE DATA SIZE TO UINT 32
 int *gpio_Mem_Formatting_Integer_Data(CustomMemTransceiver transceiver, const uint32_t *dataArray, int dataSize) {
     int *usableDataArray = malloc(dataSize * sizeof(int));
     int index;
@@ -700,7 +705,7 @@ int gpio_Mem_Shift_Data(CustomMemTransceiver transceiver, uint32_t data) {
 
 /**
  * Used to shift data read accordingly to port offset
- * Warning : use this functionly only if transmission ports are consecutive
+ * Warning : use this function only if transmission ports are consecutive
  *
  * @param transceiver
  * @param data Data to shift
@@ -930,6 +935,11 @@ void gpio_mem_multiple_speed_test(int nbTest, int internalRepetition, int delay)
     printf("Average frequency is : %lf Hz\r\n", frequency);
 }
 
+/**
+ * Test function for the writing part of the protocol
+ * Initialize data structures and open memory mapping
+ * Wait for the writer and display received result
+ */
 void gpio_Mem_Protocol_Reader() {
 
     CustomMemTransceiver transceiver;
@@ -988,7 +998,12 @@ void gpio_Mem_Protocol_Reader() {
     gpio_Mem_CleanUp(fd, transceiver.bank);
 }
 
-
+/**
+ * Test function for the writing part of the protocol
+ * Initialize data structures and open memory mapping
+ * Send 63 value from 0 to 62
+ *
+ */
 void gpio_Mem_Protocol_Writer() {
     CustomMemTransceiver transceiver;
     int pinPort[6] = {31, 30, 29, 28, 27, 26};
@@ -1024,177 +1039,141 @@ void gpio_Mem_Protocol_Writer() {
 }
 
 /**
- * DEPRECATED
+ * Send an entire set of data using a transceiver and the current protocol
  *
- * Convert received data to 32 bits values according to the number of data pins in use
- * Will read all the data array, adding values found to current 32 bits number
- * Warning Only working for transceiver data pins number divider of 32
- *
- * @param transceiver Transceiver containing all the port informations
- * @param data Data received from another board using a trasnceiver structure
+ * @param transceiver
+ * @param data 32 bits data to transmit
  * @param dataSize Size of the data array
- * @param returnedDataSize Size of the returned unmarshalled array
- * @return Unmarshalled 32 bits value array
  */
-uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t dataSize, size_t *returnedDataSize) {
-//    printf("\n\n\t\t**UNMARSHALLING **\n\n");
+void gpio_Protocol_Send(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize) {
+    size_t marshalledDataSize;
+    uint32_t *marshalledData = gpio_Marshall_Simplified(transceiver, data, dataSize, &marshalledDataSize);
+    uint32_t *formattedData = (uint32_t *) gpio_Mem_Formatting_Integer_Data(transceiver, marshalledData,
+                                                                            (int) marshalledDataSize);
 
-    int numberOfReadingPerWord;
-    numberOfReadingPerWord = 32u / transceiver.nb_Data_Pins;
-//    printf("Number Of reading per word : %d\n", numberOfReadingPerWord);
+//    // TODO REMOVE
+//    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_OUT);
+//    usleep(10);
 
-    size_t numberOfDataBits = dataSize * transceiver.nb_Data_Pins;
-//    printf("Number of data bits : %d\n", numberOfDataBits);
-    // If total number of bit is not divisible by 32
-//    if (32u % numberOfDataBits) {
-//        *returnedDataSize = (numberOfDataBits / 32u) + 1;
-//    } else {
-    // Discard remaining data that do not form a word
-    *returnedDataSize = (numberOfDataBits / 32u);
-//    printf("Returned data size : %d\n", *returnedDataSize);
-//    }
-
-    // Array memory allocation
-    uint32_t *unmarshalledData = malloc(*returnedDataSize * sizeof(uint32_t));
-    int lastingBits = 32;
-    uint32_t mainValue = 0;
-    uint32_t truncatedValue = 0;
-    int overflowFlag = 0;
-    int difference;
-    int resultArrayIndex = 0;
-    int invertedReadingIndex = numberOfReadingPerWord - 1;
-//    printf("Inverted reading index : %d\n", invertedReadingIndex);
-    // Number of bits that will overflow
-    int offset = 32u % transceiver.nb_Data_Pins;
-    for (int i = 0; i < dataSize; ++i) {
-        difference = transceiver.nb_Data_Pins - lastingBits;
-        // Overflow of data
-        // 2 truncated words sharing same portion (array space)
-//        printf("Data[%d] : 0x%x\n", i, data[i]);
-
-        if (lastingBits < transceiver.nb_Data_Pins) {
-            overflowFlag = 1;
-            mainValue += data[i] >> (difference);
-            // Masking to keep only the least significant part of the word
-            // mask = pow(2, difference) - 1;
-            truncatedValue = data[i] & (0xffffffffu >> lastingBits);
-            lastingBits = 32 - difference;
-            // Updating number of bits that will overflow
-            offset = lastingBits % transceiver.nb_Data_Pins;
-            invertedReadingIndex = numberOfReadingPerWord - 1;
-
-            // The word is complete
-            unmarshalledData[resultArrayIndex] = mainValue;
-            mainValue = 0;
-            resultArrayIndex++;
-        }
-            // Only one part of a word on this portion
-        else {
-            // Handle the truncated starting part of a word
-            if (overflowFlag) {
-                // TODO HANDLE SHIFTING FOR TRUNCATED VALUE
-                mainValue += truncatedValue << ((invertedReadingIndex * transceiver.nb_Data_Pins) + offset);
-                truncatedValue = 0;
-                overflowFlag = 0;
-                invertedReadingIndex--;
-            }
-            mainValue += ((uint32_t) data[i]) << ((invertedReadingIndex * transceiver.nb_Data_Pins) + offset);
-            invertedReadingIndex--;
-
-            lastingBits -= transceiver.nb_Data_Pins;
-            // The word is complete
-            if (lastingBits == 0) {
-                unmarshalledData[resultArrayIndex] = mainValue;
-                resultArrayIndex++;
-                invertedReadingIndex = numberOfReadingPerWord - 1;
-                lastingBits = 32u;
-                mainValue = 0;
-            }
-        }
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
+    printf("Reset\r\n");
+    if (gpio_Mem_Chip_To_Chip_Writer(transceiver, (int *) formattedData, (int) marshalledDataSize) < 0) {
+        perror("Writing function failed");
     }
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
+
+
+    free(marshalledData);
+    free(formattedData);
+}
+
+/**
+ * Receive an entire set of data using a transceiver and the current protocol
+ * Wait for the writing to start the transmission
+ *
+ * @param transceiver
+ * @param returnedDataSize Size of the array returned
+ * @return 32 bits unmarshalled word
+ */
+uint32_t *gpio_Protocol_Receive(CustomMemTransceiver transceiver, size_t *returnedDataSize) {
+
+//    __uint32_t mask = gpio_Reading_Mask_From_Transceiver(transceiver);
+//    printf("mask : %x\n", mask);
+
+    // TODO REMOVE
+//    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_IN);
+//    usleep(10);
+
+    printf("reset\n");
+    gpio_Mem_Transceiver_Send_Data(transceiver, 0, 0);
+    usleep(100);
+    int flag = 0;
+    uint32_t resultSize = 0;
+    uint32_t *resultArray;
+    printf("Waiting for HIGH on port %d\n", transceiver.rc_Port);
+    gpio_Mem_Wait_For_Value(transceiver, RC_HIGH, &flag);
+    if (flag != 0) {
+        perror("No start from emitter");
+        return NULL;
+    }
+    printf("Starting to listen\n");
+    resultArray = gpio_Mem_Chip_To_Chip_Reader(transceiver, &resultSize);
+    if (resultArray == NULL) {
+        perror("Result array is null");
+        free(resultArray);
+        return NULL;
+    }
+
+    print_Formatted_Data(resultArray, resultSize);
+    uint32_t *unmarshalledData = gpio_Unmarshall_Simplified(transceiver, resultArray, resultSize, returnedDataSize);
+    free(resultArray);
     return unmarshalledData;
 }
 
 /**
- * DEPRECATED
- *
- * WARNING  : only functioning for number of data pins divider of 32
- * @param transceiver Transceiver containing all the port informations
- * @param data
- * @param dataSize
- * @param returnedDataSize
- * @return
+ * Test function for protocol send
+ * Initialize data structure and open memory map
  */
-uint32_t *gpio_Marshall(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize, size_t *returnedDataSize) {
+void gpio_Protocol_Send_Test() {
+    CustomMemTransceiver transceiver;
+    int pinPort[6] = {31, 30, 29, 28, 27, 26};
+    transceiver.pins_Ports = pinPort;
+    transceiver.nb_Data_Pins = 6;
+    transceiver.tc_Port = 24;
+    transceiver.rc_Port = 25;
+    transceiver.bank = 2;
 
-    int numberOfWritingPerWord;
-    numberOfWritingPerWord = 32u / transceiver.nb_Data_Pins;
-    // We need to create one more array space in case of overflow
-    if ((32u * dataSize) % transceiver.nb_Data_Pins) {
-//        *returnedDataSize = dataSize * numberOfWritingPerWord + 1;
-        // TODO check if necessary
-        *returnedDataSize = (dataSize * 32) / transceiver.nb_Data_Pins + 1;
-    } else {
-//        *returnedDataSize = dataSize * numberOfWritingPerWord;
-        *returnedDataSize = (dataSize * 32) / transceiver.nb_Data_Pins;
+    uint32_t data[5] = {7, 0xffffffff, 255, 16, 0xffff};
+
+
+    int fd = gpio_Mem_Map();
+    open_Amba_clk();
+    usleep(100);
+    enable_gpio_clock();
+    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_OUT);
+    usleep(100);
+
+    gpio_Protocol_Send(transceiver, data, 5);
+    gpio_Mem_CleanUp(fd, transceiver.bank);
+}
+
+/**
+ * Test function for protocol received
+ * Initialize data structure and open memory map
+ * Print data received
+ */
+void gpio_Protocol_Receive_Test() {
+
+    CustomMemTransceiver transceiver;
+    int pinPort[6] = {39, 38, 37, 36, 35, 34};
+    transceiver.pins_Ports = pinPort;
+    transceiver.nb_Data_Pins = 6;
+    transceiver.tc_Port = 33;
+    transceiver.rc_Port = 32;
+    transceiver.bank = 3;
+
+
+    int fd = gpio_Mem_Map();
+    open_Amba_clk();
+    usleep(100);
+    enable_gpio_clock();
+    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_IN);
+    usleep(100);
+
+    size_t returnedDataSize = 0;
+    uint32_t *dataReceived = gpio_Protocol_Receive(transceiver, &returnedDataSize);
+    if (dataReceived == NULL) {
+        perror("Data received is null");
+        return;
+    }
+    for (int i = 0; i < returnedDataSize; ++i) {
+        printf("Data %d, :\t%x", i, dataReceived[i]);
     }
 
-    // Array memory allocation
-    uint32_t *marshalledData = malloc(*returnedDataSize * sizeof(uint32_t));
-    int remainingBits = 32;
-    // Keep only the size of a sending
-    uint32_t mask = 0xffffffff >> (32 - transceiver.nb_Data_Pins);
-    uint32_t valueToStore = 0;
-    uint32_t overflowedValue = 0;
-    int numberSharedBitsStrong = 0;
-    int precedingOffset = 0;
-    int overflowFlag = 0;
-    int generalIndex = 0;
 
-    for (int index = 0; index < dataSize; ++index) {
-        // Decrementing loop, storing chunk by chunk in a one dimensional array
-//        numberSharedBitsStrong = (32 - numberSharedBitsStrong) % transceiver.nb_Data_Pins;
-        numberSharedBitsStrong = remainingBits % transceiver.nb_Data_Pins;
-        // If the precedent value overflowed we need to write one more for the next value
-        for (int leftToWrite = numberOfWritingPerWord - 1 + (overflowFlag != 0), internalIndex = 0;
-             leftToWrite >= 0; --leftToWrite, ++internalIndex, ++generalIndex) {
-            valueToStore = data[index] >> (leftToWrite * transceiver.nb_Data_Pins + numberSharedBitsStrong);
-            // Index shifting by the index of the word that is actually marshalled, time the number of writting necessary for a word
-            if (overflowFlag) {
-//                remainingBits -= (transceiver.nb_Data_Pins - precedingOffset);
-                valueToStore += overflowedValue;
-                overflowFlag = 0;
-            } else {
-                remainingBits -= transceiver.nb_Data_Pins;
-            }
-//            marshalledData[(index * numberOfWritingPerWord) + internalIndex] = valueToStore & mask;
-            marshalledData[generalIndex] = valueToStore & mask;
-
-//            printf("Creating index : %d\t Remaining : %d\n", (index * numberOfWritingPerWord) + internalIndex,
-//                   remainingBits);
-            printf("Creating index : %d\t Remaining : %d\n", generalIndex,
-                   remainingBits);
-        }
-        // If there is an overflow
-        if (remainingBits) {
-            // Mask the data to keep only the data that overflowed and will share next array space
-            if (index < dataSize) {
-                overflowedValue = data[index] & (0xffffffff >> (32 - remainingBits));
-            }
-            // Shift the value that overflow to fit in the next array space
-            overflowedValue = overflowedValue << (transceiver.nb_Data_Pins - numberSharedBitsStrong);
-            remainingBits = 32 - (transceiver.nb_Data_Pins - numberSharedBitsStrong);
-            overflowFlag = 1;
-        } else {
-            remainingBits = 32;
-        }
-        precedingOffset = numberSharedBitsStrong;
-    }
-    // Handle the last overflow
-    if (overflowFlag) {
-        marshalledData[*returnedDataSize - 1] = overflowedValue & mask;
-    }
-    return marshalledData;
+//    print_Formatted_Data(resultArray, resultSize);
+    free(dataReceived);
+    gpio_Mem_CleanUp(fd, transceiver.bank);
 }
 
 /**
@@ -1311,8 +1290,8 @@ int gpio_Marshall_Unmarshall_Validity_Check(int nbDataPins) {
             printf("Value %d \t: %x \n", i, marshalledData[i]);
         }
     }
-    if(returnedFlag == 0){
-        printf("Succes\n");
+    if (returnedFlag == 0) {
+        printf("Success\n");
     }
 //    for (int k = 0; k < finalSize; ++k) {
 //        printf("Value unmarshalled : %x \n", finalResult[k]);
@@ -1322,4 +1301,6 @@ int gpio_Marshall_Unmarshall_Validity_Check(int nbDataPins) {
     free(finalResult);
     return returnedFlag;
 }
+
+
 
