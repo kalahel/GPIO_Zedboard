@@ -118,6 +118,12 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
 
 uint32_t *gpio_Marshall(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize, size_t *returnedDataSize);
 
+uint32_t *
+gpio_Marshall_Simplified(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize, size_t *returnedDataSize);
+
+uint32_t *gpio_Unmarshall_Simplified(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize,
+                                     size_t *returnedDataSize);
+
 int gpio_Marshall_Unmarshall_Validity_Check(int nbDataPins);
 
 // TODO make it local
@@ -149,7 +155,12 @@ int main(int argc, char *argv[]) {
 //    for (int k = 0; k < j; ++k) {
 //        printf("%d,", notMatchingPinsNumber[k]);
 //    }
-    gpio_Marshall_Unmarshall_Validity_Check(3);
+//    gpio_Marshall_Unmarshall_Validity_Check(6);
+    for (int i = 1; i < 33; ++i) {
+        gpio_Marshall_Unmarshall_Validity_Check(i);
+
+    }
+
     return 0;
 }
 
@@ -612,7 +623,7 @@ gpio_Mem_Formatting_Binary_Data(CustomMemTransceiver transceiver, const int *dat
  * Shift data array to adapt to given transceiver
  * Warning does not check for overflow of data, may result in data loss
  * Use this function carefully
- * Do not forget to free the result array later
+ * Do not forget to free the resulted array later
  *
  * @param transceiver Structure containing all the port information
  * @param dataArray Array of unsigned integer value to b converted
@@ -1013,8 +1024,11 @@ void gpio_Mem_Protocol_Writer() {
 }
 
 /**
+ * DEPRECATED
+ *
  * Convert received data to 32 bits values according to the number of data pins in use
  * Will read all the data array, adding values found to current 32 bits number
+ * Warning Only working for transceiver data pins number divider of 32
  *
  * @param transceiver Transceiver containing all the port informations
  * @param data Data received from another board using a trasnceiver structure
@@ -1101,6 +1115,16 @@ uint32_t *gpio_Unmarshall(CustomMemTransceiver transceiver, int *data, size_t da
     return unmarshalledData;
 }
 
+/**
+ * DEPRECATED
+ *
+ * WARNING  : only functioning for number of data pins divider of 32
+ * @param transceiver Transceiver containing all the port informations
+ * @param data
+ * @param dataSize
+ * @param returnedDataSize
+ * @return
+ */
 uint32_t *gpio_Marshall(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize, size_t *returnedDataSize) {
 
     int numberOfWritingPerWord;
@@ -1165,7 +1189,6 @@ uint32_t *gpio_Marshall(CustomMemTransceiver transceiver, uint32_t *data, size_t
             remainingBits = 32;
         }
         precedingOffset = numberSharedBitsStrong;
-//        printf("Offset : %d\n", numberSharedBitsStrong);
     }
     // Handle the last overflow
     if (overflowFlag) {
@@ -1174,18 +1197,104 @@ uint32_t *gpio_Marshall(CustomMemTransceiver transceiver, uint32_t *data, size_t
     return marshalledData;
 }
 
+/**
+ * Divide 32 bits word in smaller sub words of the size of the transceiver data pin number
+ * Handle correctly transceiver with data pin number not divider of 32
+ * Will always have the same number of sub words for a 32 bits word
+ *
+ * @param transceiver Transceiver containing all the port informations
+ * @param data 32 bits word data array to convert
+ * @param dataSize Size of the data array
+ * @param returnedDataSize Size of the returned data array
+ * @return Array of sub word
+ */
+uint32_t *
+gpio_Marshall_Simplified(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize, size_t *returnedDataSize) {
+    // Number of writing necessary for a 32 bits word
+    int numberOfWritingPerWord = (32u / transceiver.nb_Data_Pins) + ((32u % transceiver.nb_Data_Pins) != 0);
+    int numberOfOverflowedBits = 32u % transceiver.nb_Data_Pins;
+    uint32_t mask = 0xffffffff >> (32 - transceiver.nb_Data_Pins);
+    *returnedDataSize = numberOfWritingPerWord * dataSize;
+    uint32_t *marshalledData = malloc(*returnedDataSize * sizeof(uint32_t));
+    uint32_t valueToStore = 0;
+
+    for (int wordIndex = 0, resultArrayIndex = 0; wordIndex < dataSize; ++wordIndex) {
+        for (int splitIndex = numberOfWritingPerWord - 1, multiplierCoefficient = 1;
+             splitIndex >= 0; --splitIndex, ++resultArrayIndex, ++multiplierCoefficient) {
+            // Case of last part of a word with overflowed bits
+            if (splitIndex == 0 && numberOfOverflowedBits != 0) {
+                valueToStore = data[wordIndex] << (transceiver.nb_Data_Pins - numberOfOverflowedBits);
+            } else {
+                valueToStore = data[wordIndex] >> (32 - (transceiver.nb_Data_Pins * multiplierCoefficient));
+            }
+
+            marshalledData[resultArrayIndex] = valueToStore & mask;
+        }
+    }
+
+    return marshalledData;
+}
+
+/**
+ * Unmarshall sub words received into 32 bits word
+ * Will shift sub words accordingly and add them to the value to store
+ * Use this only with the data marshalled in gpio_Marshall_Simplified
+ *
+ * @param transceiver Transceiver containing all the port informations
+ * @param data Sub word data array to unmarshall
+ * @param dataSize Size of the sub word array
+ * @param returnedDataSize Size of the returned data array
+ * @return 32 bits word data array
+ */
+uint32_t *gpio_Unmarshall_Simplified(CustomMemTransceiver transceiver, uint32_t *data, size_t dataSize,
+                                     size_t *returnedDataSize) {
+    int numberOfWritingPerWord = (32u / transceiver.nb_Data_Pins) + ((32u % transceiver.nb_Data_Pins) != 0);
+    int numberOfOverflowedBits = 32u % transceiver.nb_Data_Pins;
+    if (dataSize % numberOfWritingPerWord) {
+        perror("Unmarshalling failed : mismatch in data size and number of writing per word");
+        return NULL;
+    }
+    *returnedDataSize = dataSize / numberOfWritingPerWord;
+    uint32_t *unmarshalledData = malloc(*returnedDataSize * sizeof(uint32_t));
+    int arrayIndex = 0;
+    for (int entireWordIndex = 0; entireWordIndex < *returnedDataSize; ++entireWordIndex) {
+        unmarshalledData[entireWordIndex] = 0;
+        for (int splitedWordIndex = 0, multiplierCoefficient = 1;
+             splitedWordIndex < numberOfWritingPerWord; ++splitedWordIndex, ++arrayIndex, ++multiplierCoefficient) {
+            if (splitedWordIndex == numberOfWritingPerWord - 1 && numberOfOverflowedBits != 0) {
+                unmarshalledData[entireWordIndex] +=
+                        data[arrayIndex] >> (transceiver.nb_Data_Pins - numberOfOverflowedBits);
+            } else {
+                unmarshalledData[entireWordIndex] +=
+                        data[arrayIndex] << (32 - (transceiver.nb_Data_Pins * multiplierCoefficient));
+            }
+        }
+    }
+    return unmarshalledData;
+}
+
+
+/**
+ * Test the marshalling and unmarshalling function automatically
+ * Compare observed result to expected values to check data validity
+ *
+ * @param nbDataPins Number of data pins used of transmission
+ * @return
+ */
 int gpio_Marshall_Unmarshall_Validity_Check(int nbDataPins) {
     int returnedFlag = 0;
     int faultSum = 0;
-    uint32_t dataToMarshall[3] = {7, 0xffffffff, 0x0};
+    uint32_t dataToMarshall[5] = {7, 0xffffffff, 0x0, 0x45, 0x78};
     CustomMemTransceiver transceiver2;
     transceiver2.nb_Data_Pins = nbDataPins;
     size_t returnedDataSize2 = 0;
-    uint32_t *marshalledData = gpio_Marshall(transceiver2, dataToMarshall, 3, &returnedDataSize2);
-
+//    uint32_t *marshalledData = gpio_Marshall(transceiver2, dataToMarshall, 3, &returnedDataSize2);
+    uint32_t *marshalledData = gpio_Marshall_Simplified(transceiver2, dataToMarshall, 5, &returnedDataSize2);
 
     size_t finalSize;
-    uint32_t *finalResult = gpio_Unmarshall(transceiver2, marshalledData, returnedDataSize2, &finalSize);
+
+    // TODO change unmarshall function and simplify it
+    uint32_t *finalResult = gpio_Unmarshall_Simplified(transceiver2, marshalledData, returnedDataSize2, &finalSize);
     printf("\n\n**Pins in usage : %d\n", nbDataPins);
     for (int j = 0; j < finalSize; ++j) {
         if (dataToMarshall[j] != finalResult[j]) {
@@ -1197,11 +1306,17 @@ int gpio_Marshall_Unmarshall_Validity_Check(int nbDataPins) {
     }
     if (returnedFlag < 0) {
         printf("Returned marshalled data size : %d\n", returnedDataSize2);
-        printf("Bad marshalling/unmarshalling : %d/%d\n", faultSum, 3);
+        printf("Bad marshalling/unmarshalling : %d/%d\n", faultSum, 5);
         for (int i = 0; i < returnedDataSize2; ++i) {
-            printf("Value %d : %x \n", i, marshalledData[i]);
+            printf("Value %d \t: %x \n", i, marshalledData[i]);
         }
     }
+    if(returnedFlag == 0){
+        printf("Succes\n");
+    }
+//    for (int k = 0; k < finalSize; ++k) {
+//        printf("Value unmarshalled : %x \n", finalResult[k]);
+//    }
 
     free(marshalledData);
     free(finalResult);
