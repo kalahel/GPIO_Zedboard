@@ -136,34 +136,8 @@ volatile void *g_MEMORY_MAP;
 
 int main(int argc, char *argv[]) {
 
-//    CustomMemTransceiver transceiver;
-//    transceiver.nb_Data_Pins = 6;
-//    size_t returnedDataSize = 0;
-//    int data[12] = {0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0b111111, 0, 0, 0b111100, 12};
-//
-//    uint32_t *returnedData = gpio_Unmarshall(transceiver, data, 12, &returnedDataSize);
-//
-//
-//    printf("Returned data size : %x\r\n", returnedDataSize);
-//    printf("First value : %x\r\n", returnedData[0]);
-//    printf("Second value : %x\r\n", returnedData[1]);
-//    int notMatchingPinsNumber[32] = {0};
-//    int j = 0;
-//    for (int i = 1; i < 33; ++i) {
-//        if (gpio_Marshall_Unmarshall_Validity_Check(i) < 0) {
-//            notMatchingPinsNumber[j] = i;
-//            j++;
-//        }
-//    }
-//    printf("\nNot matching pin number :\n");
-//    for (int k = 0; k < j; ++k) {
-//        printf("%d,", notMatchingPinsNumber[k]);
-//    }
-//    gpio_Marshall_Unmarshall_Validity_Check(6);
-    for (int i = 1; i < 33; ++i) {
-        gpio_Marshall_Unmarshall_Validity_Check(i);
-
-    }
+    gpio_Protocol_Send_Test();
+    gpio_Protocol_Receive_Test();
 
     return 0;
 }
@@ -800,7 +774,7 @@ int gpio_Mem_Transceiver_Send_Data(CustomMemTransceiver transceiver, __uint32_t 
 
 /**
  * Reset the value on the entire bank, disable the clock and close the memory mapping
- * Note disabling gpio clock prevent other process to use gpio
+ * Note : disabling gpio clock prevent other process to use gpio
  *
  * @param fd File descriptor of "/dev/mem"
  * @param bank Bank to reset
@@ -1104,7 +1078,7 @@ uint32_t *gpio_Protocol_Receive(CustomMemTransceiver transceiver, size_t *return
         return NULL;
     }
 
-    print_Formatted_Data(resultArray, resultSize);
+//    print_Formatted_Data(resultArray, resultSize);
     uint32_t *unmarshalledData = gpio_Unmarshall_Simplified(transceiver, resultArray, resultSize, returnedDataSize);
     free(resultArray);
     return unmarshalledData;
@@ -1166,12 +1140,12 @@ void gpio_Protocol_Receive_Test() {
         perror("Data received is null");
         return;
     }
+
+    //Printing of the result array
     for (int i = 0; i < returnedDataSize; ++i) {
-        printf("Data %d, :\t%x", i, dataReceived[i]);
+        printf("Data %d, :\t%x\n", i, dataReceived[i]);
     }
 
-
-//    print_Formatted_Data(resultArray, resultSize);
     free(dataReceived);
     gpio_Mem_CleanUp(fd, transceiver.bank);
 }
