@@ -1,14 +1,14 @@
 /**
- * @file   ebbchar.c
- * @author Derek Molloy
- * @date   7 April 2015
- * @version 0.1
- * @brief   An introductory character driver to support the second article of my series on
- * Linux loadable kernel module (LKM) development. This module maps to /dev/ebbchar and
- * comes with a helper C program that can be run in Linux user space to communicate with
- * this the LKM.
- * @see http://www.derekmolloy.ie/ for a full description and follow-up descriptions.
+ *
+  ___             _
+ | _ \___ __ _ __| |  _ __  ___
+ |   / -_) _` / _` | | '  \/ -_)
+ |_|_\___\__,_\__,_| |_|_|_\___|
+
+ * Function : read a value from user and return it to him when requested
+ * Consider it only as a first attempt to make a kernel module
  */
+
 
 #include <linux/init.h>           // Macros used to mark up functions e.g. __init __exit
 #include <linux/module.h>         // Core header for loading LKMs into the kernel
@@ -27,7 +27,6 @@ MODULE_VERSION("0.1");            ///< A version number to inform users
 
 static int    majorNumber;                  ///< Stores the device number -- determined automatically
 static char   message[256] = {0};           ///< Memory for the string that will be sent to userspace
-//static char   receivedMessage[128] = {0};   ///< Memory of the string that will be passed from userspace
 static short  size_of_message;              ///< Used to remember the size of the string stored
 static int    numberOpens = 0;              ///< Counts the number of times the device is opened
 static struct class*  ebbcharClass  = NULL; ///< The device-driver class struct pointer
@@ -36,13 +35,9 @@ static struct device* ebbcharDevice = NULL; ///< The device-driver device struct
 // The prototype functions for the character driver -- must come before the struct definition
 static int     dev_open(struct inode *, struct file *);
 static int     dev_release(struct inode *, struct file *);
-static ssize_t dev_write(struct file *, const char *, size_t, loff_t *);
 static ssize_t device_file_printGpio(struct file *file_ptr, char __user *user_buffer, size_t count, loff_t *position);
 static ssize_t device_write(struct file *file, const char __user * buffer, size_t length, loff_t * offset);
 
-// Used for read function
-static const char    g_s_Hello_World_string[] = "Hello world from kernel mode!\n\0";
-static const ssize_t g_s_Hello_World_size = sizeof(g_s_Hello_World_string);
 
 /*
  * The message the device will give when asked
@@ -129,26 +124,6 @@ static int dev_open(struct inode *inodep, struct file *filep){
     numberOpens++;
     printk(KERN_INFO "EBBChar: Device has been opened %d time(s)\n", numberOpens);
     return 0;
-}
-
-/** @brief This function is called whenever the device is being written to from user space i.e.
- *  data is sent to the device from the user. The data is copied to the message[] array in this
- *  LKM using the sprintf() function along with the length of the string.
- *  @param filep A pointer to a file object
- *  @param buffer The buffer to that contains the string to write to the device
- *  @param len The length of the array of data that is being passed in the const char buffer
- *  @param offset The offset if required
- */
-static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, loff_t *offset){
-//    if(snprintf(receivedMessage, sizeof(receivedMessage), buffer) > sizeof(receivedMessage)){
-//        printk(KERN_ALERT "Writing caused buffer overflowed, possible data loss\n");
-//    }
-    kstrtol(buffer, 0, &gpioNumber);
-    //  kstrtol(message, 0, &gpioNumber);
-    printk(KERN_INFO "EBBChar: Received %zu characters from the user\n", len);
-    printk(KERN_INFO "Current gpio number : %ld\n", gpioNumber);
-
-    return len;
 }
 
 /** @brief The device release function that is called whenever the device is closed/released by
