@@ -16,16 +16,18 @@
 #include <linux/kernel.h>         // Contains types, macros, functions for the kernel
 #include <linux/fs.h>             // Header for the Linux file system support
 #include <linux/uaccess.h>          // Required for the copy to user function
-#define  DEVICE_NAME "greeter2"    ///< The device will appear at /dev/ebbchar using this value
-#define  CLASS_NAME  "greet"        ///< The device class -- this is a character device driver
+#define  DEVICE_NAME "gpioTeller"    ///< The device will appear at /dev/ebbchar using this value
+#define  CLASS_NAME  "teller"        ///< The device class -- this is a character device driver
+#define  BUF_LEN 32
 
 MODULE_LICENSE("GPL");            ///< The license type -- this affects available functionality
-MODULE_AUTHOR("Derek Molloy");    ///< The author -- visible when you use modinfo
-MODULE_DESCRIPTION("A simple Linux char driver for the BBB");  ///< The description -- see modinfo
+MODULE_AUTHOR("Mathieu Hannoun");    ///< The author -- visible when you use modinfo
+MODULE_DESCRIPTION("Store the number you entered");  ///< The description -- see modinfo
 MODULE_VERSION("0.1");            ///< A version number to inform users
 
 static int    majorNumber;                  ///< Stores the device number -- determined automatically
-static char   message[256] = {0};           ///< Memory for the string that is passed from userspace
+static char   message[256] = {0};           ///< Memory for the string that will be sent to userspace
+//static char   receivedMessage[128] = {0};   ///< Memory of the string that will be passed from userspace
 static short  size_of_message;              ///< Used to remember the size of the string stored
 static int    numberOpens = 0;              ///< Counts the number of times the device is opened
 static struct class*  ebbcharClass  = NULL; ///< The device-driver class struct pointer
@@ -34,9 +36,26 @@ static struct device* ebbcharDevice = NULL; ///< The device-driver device struct
 // The prototype functions for the character driver -- must come before the struct definition
 static int     dev_open(struct inode *, struct file *);
 static int     dev_release(struct inode *, struct file *);
-static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
 static ssize_t dev_write(struct file *, const char *, size_t, loff_t *);
-static ssize_t device_file_read(struct file *file_ptr, char __user *user_buffer, size_t count, loff_t *position);
+static ssize_t device_file_printGpio(struct file *file_ptr, char __user *user_buffer, size_t count, loff_t *position);
+static ssize_t device_write(struct file *file, const char __user * buffer, size_t length, loff_t * offset);
+
+// Used for read function
+static const char    g_s_Hello_World_string[] = "Hello world from kernel mode!\n\0";
+static const ssize_t g_s_Hello_World_size = sizeof(g_s_Hello_World_string);
+
+/*
+ * The message the device will give when asked
+ */
+static char messageReceived[BUF_LEN];
+/*
+ * How far did the process reading the message get?
+ * Useful if the message is larger than the size of the
+ * buffer we get to fill in device_read.
+ */
+static char *Message_Ptr;
+
+static long gpioNumber;
 
 /** @brief Devices are represented as file structure in the kernel. The file_operations structure from
  *  /linux/fs.h lists the callback functions that you wish to associated with your file operations
@@ -45,9 +64,8 @@ static ssize_t device_file_read(struct file *file_ptr, char __user *user_buffer,
 static struct file_operations fops =
         {
                 .open = dev_open,
-//                .read = dev_read,
-                .read = device_file_read,
-                .write = dev_write,
+                .read = device_file_printGpio,
+                .write = device_write,
                 .release = dev_release,
         };
 
@@ -86,6 +104,7 @@ static int __init ebbchar_init(void){
         return PTR_ERR(ebbcharDevice);
     }
     printk(KERN_INFO "EBBChar: device class created correctly\n"); // Made it! device was initialized
+    gpioNumber = 0; // Gpio initialization
     return 0;
 }
 
@@ -112,31 +131,6 @@ static int dev_open(struct inode *inodep, struct file *filep){
     return 0;
 }
 
-/** @brief This function is called whenever device is being read from user space i.e. data is
- *  being sent from the device to the user. In this case is uses the copy_to_user() function to
- *  send the buffer string to the user and captures any errors.
- *  @param filep A pointer to a file object (defined in linux/fs.h)
- *  @param buffer The pointer to the buffer to which this function writes the data
- *  @param len The length of the b
- *  @param offset The offset if required
- */
-static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset){
-    int error_count = 0;
-    // copy_to_user has the format ( * to, *from, size) and returns 0 on success
-//    error_count = copy_to_user(buffer, message, size_of_message);
-    char messageToSend[3] = "hi";
-    error_count = copy_to_user(buffer, messageToSend, 3);
-
-    if (error_count==0){            // if true then have success
-        printk(KERN_INFO "EBBChar: Sent %d characters to the user\n", size_of_message);
-        return (size_of_message=0);  // clear the position to the start and return 0
-    }
-    else {
-        printk(KERN_INFO "EBBChar: Failed to send %d characters to the user\n", error_count);
-        return -EFAULT;              // Failed -- return a bad address message (i.e. -14)
-    }
-}
-
 /** @brief This function is called whenever the device is being written to from user space i.e.
  *  data is sent to the device from the user. The data is copied to the message[] array in this
  *  LKM using the sprintf() function along with the length of the string.
@@ -146,9 +140,14 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
  *  @param offset The offset if required
  */
 static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, loff_t *offset){
-//    sprintf(message, "%s(%zu letters)", buffer, len);   // appending received string with its length
-    size_of_message = strlen(message);                 // store the length of the stored message
+//    if(snprintf(receivedMessage, sizeof(receivedMessage), buffer) > sizeof(receivedMessage)){
+//        printk(KERN_ALERT "Writing caused buffer overflowed, possible data loss\n");
+//    }
+    kstrtol(buffer, 0, &gpioNumber);
+    //  kstrtol(message, 0, &gpioNumber);
     printk(KERN_INFO "EBBChar: Received %zu characters from the user\n", len);
+    printk(KERN_INFO "Current gpio number : %ld\n", gpioNumber);
+
     return len;
 }
 
@@ -162,25 +161,44 @@ static int dev_release(struct inode *inodep, struct file *filep){
     return 0;
 }
 
-
-static const char    g_s_Hello_World_string[] = "Hello world from kernel mode!\n\0";
-static const ssize_t g_s_Hello_World_size = sizeof(g_s_Hello_World_string);
-
-static ssize_t device_file_read(struct file *file_ptr, char __user *user_buffer, size_t count, loff_t *position){
-    printk( KERN_NOTICE "Simple-driver: Device file is read at offset = %i, read bytes count = %u", (int)*position, (unsigned int)count );
-    /* If position is behind the end of a file we have nothing to read */
-    if( *position >= g_s_Hello_World_size )
-        return 0;
-    /* If a user tries to read more than we have, read only as many bytes as we have */
-    if( *position + count > g_s_Hello_World_size )
-        count = g_s_Hello_World_size - *position;
-    if( copy_to_user(user_buffer, g_s_Hello_World_string + *position, count) != 0 )
-        return -EFAULT;
-    /* Move reading position */
-    *position += count;
+/**
+ * Called when the user read from the pseudo file
+ * @param file_ptr
+ * @param __user
+ * @return
+ */
+static ssize_t device_file_printGpio(struct file *file_ptr, char __user *user_buffer, size_t count, loff_t *position){
+    printk(KERN_INFO "Current gpio number : %ld\n", gpioNumber);
+    snprintf(message, sizeof(message), "%ld", gpioNumber);
+    copy_to_user(user_buffer, message, sizeof(message));
     return count;
 }
 
+
+/*
+ * This function is called when somebody tries to
+ * write into our device file.
+ */
+static ssize_t device_write(struct file *file, const char __user * buffer, size_t length, loff_t * offset){
+    int i;
+
+    #ifdef DEBUG
+    printk(KERN_INFO "device_write(%p,%s,%d)", file, buffer, length);
+    #endif
+    // TODO CHECK FOR OVERFLOW
+    for (i = 0; i < length && i < BUF_LEN; i++)
+    get_user(messageReceived[i], buffer + i);
+
+    Message_Ptr = messageReceived;
+    kstrtol(messageReceived, 0, &gpioNumber);
+
+
+
+/*
+* Again, return the number of input characters used
+*/
+    return i;
+}
 
 /** @brief A module must use the module_init() module_exit() macros from linux/init.h, which
  *  identify the initialization function at insertion time and the cleanup function (as

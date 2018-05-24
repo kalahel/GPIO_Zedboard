@@ -1,4 +1,4 @@
-obj-m+=greeter2.o
+obj-m+=gpioTeller.o
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build/ M=$(PWD) modules
