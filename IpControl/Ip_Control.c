@@ -14,7 +14,6 @@
 #include <sys/mman.h>
 
 
-// TODO change this size
 #define TRANSMITTER_BASE_ADDR 0x43C00000
 #define TRANSMITTER_HIGH_ADDR 0x43C0FFFF
 #define RECEIVER_BASE_ADDR 0x43C10000
