@@ -76,17 +76,16 @@ end process;
 -- Responsible for the incrementation of the current step and generate a request signal for the fifo
 stepIncrement : process (counter_clk)
 begin
-    if currentStep = stepForWriting - 1 then
-        -- Reset current step, -1 when finished/inactive
-        currentStep <= -1;
-        finished <= '1';
-    else
-        if counter_clk = '1' then
+    if rising_edge(counter_clk) then
+        if currentStep = stepForWriting - 1 then
+            -- Reset current step, -1 when finished/inactive
+            currentStep <= -1;
+            finished <= '1';
+        else
             currentStep <= currentStep + 1;
             finished <= '0';
         end if;
     end if;
 end process;
-
 
 end Behavioral;
