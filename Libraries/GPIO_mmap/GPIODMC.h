@@ -5,6 +5,20 @@
 //
 
 #ifndef GPIO_ZEDBOARD_GPIODMC_H
+
+#include <fcntl.h>
+#include <poll.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/time.h>
+#include <sys/epoll.h>
+#include <sys/mman.h>
+
+
+
 #define GPIO_ZEDBOARD_GPIODMC_H
 #define GPIO_BASE_ADDR 0xE000A000
 #define GPIO_END_ADDR 0xE000AFFF
