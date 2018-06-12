@@ -5,17 +5,6 @@
 //
 
 #include "GPIODMC.h"
-#include <fcntl.h>
-#include <poll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <errno.h>
-#include <sys/time.h>
-#include <sys/epoll.h>
-#include <sys/mman.h>
-
 
 // TODO make it local
 static volatile unsigned int *g_CLOCK_ADDRESS;

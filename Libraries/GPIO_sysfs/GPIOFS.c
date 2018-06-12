@@ -1,152 +1,12 @@
-
-
-#include <fcntl.h>
-#include <poll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <errno.h>
-#include <sys/time.h>
-#include <sys/epoll.h>
-
-
-#define GPIO_PATH "/sys/class/gpio/gpio"
-#define GPIO_PATH_EXPORT "/sys/class/gpio/export"
-#define GPIO_PATH_UNEXPORT "/sys/class/gpio/unexport"
-#define GPIO_VALUE "/value"
-#define GPIO_EDGE "/edge"
-#define GPIO_DIRECTION "/direction"
-#define LINUX_OFFSET 54
-#define GPIO_OUT 0
-#define GPIO_IN 1
-#define EDGE_RISING 0
-#define EDGE_FALLING 1
-#define EDGE_BOTH 2
-
-
-/**
- * Structure used for transceiver
- * Has nb_Data_Pins number of data pins
- * One clock
- *
- * nb_Data_Pins : Total number of data pins (clk not included)
- * pins_Ports : Array of pins ports
- * pins_Fds : Files descriptors opened on the pseudo files of the pins
- * clk_Port : Port of the clock
- * clk_fd : File descriptor for the clock
- */
-typedef struct {
-    int nb_Data_Pins;
-    int *pins_Ports;
-    int *pins_Fds;
-    int clk_Port;
-    int clk_fd;
-} CustomTransceiver;
-
-
-int gpio_SetDataDirection(int portAddr, int mode);
-
-int gpio_SetDataDirection_Range(int firstPortAddr, int lastPortAddr, int mode);
-
-int gpio_Unexport(int portAddr);
-
-int gpio_Read(int portAddr, void *buf, size_t count);
-
-int gpio_Open(int portAddr, int flags);
-
-int gpio_Close_Transceiver(CustomTransceiver transceiver);
-
-int gpio_Set_Edge(int clkAddr, int edgeOption);
-
-int gpio_Clocked_Read(int portAddr, int clkAddr, char *buf, size_t count, char *edgeOption, size_t edgeOptionSize);
-
-int gpio_Clocked_Poll(int portAddr);
-
-int gpio_Clocked_Poll_Monitor(int clkAddr, int portAddr);
-
-int gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, useconds_t clkReadRate, int edgeOption);
-
-int reader_Fast();
-
-int gpio_Write_Fast(int fd, char value);
-
-void gpio_Write_Fast_Tester(int nbTest, int internalRepetition);
-
-int gpio_Export_Transceiver(CustomTransceiver transceiver, int mode);
-
-int gpio_Unexport_Transceiver(CustomTransceiver transceiver);
-
-CustomTransceiver gpio_Open_Transceiver(CustomTransceiver transceiver, int flags);
-
-int gpio_Write_Rising_half_Transceiver(CustomTransceiver transceiver, char data[], int dataSize);
-
-int gpio_Write_Falling_half_Transceiver(CustomTransceiver transceiver, char data[], int dataSize);
-
-int gpio_Write_Rising_Transceiver(CustomTransceiver transceiver, char data[], int dataSize);
-
-int gpio_Write_Falling_Transceiver(CustomTransceiver transceiver, char data[], int dataSize);
-
-void transceiver_Print_Info(CustomTransceiver transceiver);
-
-int gpio_Write_Both(CustomTransceiver transceiver, char dataFirst[], char dataSecond[], int dataSize);
-
-void transceiver_Write_Tester(int nbTest, int internalRepetition, CustomTransceiver transceiver);
-
-int main(int argc, char *argv[]) {
-
-
-//    //gpio_Write_Fast_Tester(10, 10000);
-//    int used_pins_Port[] = {7, 8, 9, 10};
-//    CustomTransceiver transceiver;
-//    transceiver.clk_Port = 24;
-//    transceiver.pins_Ports = used_pins_Port;
-//    transceiver.nb_Data_Pins = 4;
-//    if (gpio_Export_Transceiver(transceiver, GPIO_OUT) < 0) {
-//        //exit(EXIT_FAILURE);
-//    }
-//    usleep(100);
 //
-//    transceiver = gpio_Open_Transceiver(transceiver, O_WRONLY);
+// Created by Mathieu Hannoun on 12/06/18.
+// GPIOFS stand for General Purpose Input/Output File System
+// It is a library used for the GPIO control on the ARM processor embedded on a Zedboard
+// For better performances use the GPIODMC library
 //
-//
-//    char data[] = {'1', '0', '1', '0'};
-//    //gpio_Write_Rising_half_Transceiver(transceiver, data, 4);
-//    transceiver_Print_Info(transceiver);
-//    if (gpio_Close_Transceiver(transceiver) < 0) {
-//        // exit(EXIT_FAILURE);
-//    }
-//    if (gpio_Unexport_Transceiver(transceiver) < 0) {
-//        // exit(EXIT_FAILURE);
-//    }
-
-    int used_pins_Port[] = {8, 9, 10};
-    CustomTransceiver transceiver;
-    transceiver.clk_Port = 7;
-    transceiver.pins_Ports = used_pins_Port;
-    transceiver.nb_Data_Pins = 3;
-    if (gpio_Export_Transceiver(transceiver, GPIO_OUT) < 0) {
-        //exit(EXIT_FAILURE);
-    }
-    usleep(100);
-
-    transceiver = gpio_Open_Transceiver(transceiver, O_WRONLY);
-
-    usleep(10);
-
-    transceiver_Write_Tester(10, 10000, transceiver);
 
 
-    if (gpio_Close_Transceiver(transceiver) < 0) {
-        // exit(EXIT_FAILURE);
-    }
-    if (gpio_Unexport_Transceiver(transceiver) < 0) {
-        // exit(EXIT_FAILURE);
-    }
-
-    return EXIT_SUCCESS;
-}
-
+#include "GPIOFS.h"
 
 // TODO split gpio export and mode set
 // TODO Handle ports already exported "Device or resource bus"
@@ -583,12 +443,11 @@ int gpio_Open(int portAddr, int flags) {
  * @param clkAddr
  * @param buf Buffer that will be filled
  * @param count Size of the buffer in character
- * @param clkReadRate
  * @param edgeOption EDGE_RISING / EDGE_FALLING / EDGE_BOTH
  * @return The number of character read (should be count - 1)
  */
 int
-gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, useconds_t clkReadRate, int edgeOption) {
+gpio_Read_Clocked_Poll(int portAddr, int clkAddr, char buf[], size_t count, int edgeOption) {
 
     if (edgeOption != EDGE_BOTH && edgeOption != EDGE_FALLING && edgeOption != EDGE_RISING) {
         perror("edgeOption invalid parameter\r\n");
