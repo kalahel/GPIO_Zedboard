@@ -223,6 +223,7 @@ int gpio_Entire_Bank_On(int bankNumber) {
 
 }
 
+// TODO must return fd
 int open_Amba_clk() {
     int fd = open("/dev/mem", O_RDWR);
     volatile void *gpio_ptr = mmap(NULL, GPIO_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, SYSTEM_LVL_CTR_BASE);
@@ -239,10 +240,12 @@ int open_Amba_clk() {
 
 int enable_gpio_clock() {
     *g_CLOCK_ADDRESS |= (1u << 22);
+    return 0;
 }
 
 int disable_gpio_clock() {
     *g_CLOCK_ADDRESS &= ~(1u << 22);
+    return 0;
 }
 
 void print_Bank_Addr() {
@@ -468,7 +471,7 @@ int gpio_Mem_Chip_To_Chip_Writer(CustomMemTransceiver transceiver, int *writable
  * Start by a acknowledgement of the communication request
  * Then wait for the number of data the emitter will transmit
  * Allocate memory in consequence
- * Do not forget to this memory later
+ * Do not forget to free this memory later
  *
  * @param transceiver Data structure containing all ports informations
  * @param resultArraySize Size of the array received from the emitter
@@ -668,6 +671,7 @@ __uint32_t gpio_Reading_Mask_From_Transceiver(CustomMemTransceiver transceiver) 
  */
 int gpio_Mem_Shift_Data(CustomMemTransceiver transceiver, uint32_t data) {
 
+    // TODO change this test by simply calling transceiver.bank
     if (gpio_Bank_From_port(transceiver.pins_Ports[transceiver.nb_Data_Pins - 1]) == 2) {
         data = data << transceiver.pins_Ports[transceiver.nb_Data_Pins - 1];
     } else {
@@ -910,7 +914,7 @@ void gpio_mem_multiple_speed_test(int nbTest, int internalRepetition, int delay)
 }
 
 /**
- * Test function for the writing part of the protocol
+ * Test function for the reading part of the protocol
  * Initialize data structures and open memory mapping
  * Wait for the writer and display received result
  */
@@ -976,7 +980,6 @@ void gpio_Mem_Protocol_Reader() {
  * Test function for the writing part of the protocol
  * Initialize data structures and open memory mapping
  * Send 63 value from 0 to 62
- *
  */
 void gpio_Mem_Protocol_Writer() {
     CustomMemTransceiver transceiver;
@@ -1024,10 +1027,6 @@ void gpio_Protocol_Send(CustomMemTransceiver transceiver, uint32_t *data, size_t
     uint32_t *marshalledData = gpio_Marshall_Simplified(transceiver, data, dataSize, &marshalledDataSize);
     uint32_t *formattedData = (uint32_t *) gpio_Mem_Formatting_Integer_Data(transceiver, marshalledData,
                                                                             (int) marshalledDataSize);
-
-//    // TODO REMOVE
-//    gpio_Mem_Set_Transceiver_Direction(transceiver, GPIO_OUT);
-//    usleep(10);
 
     gpio_Mem_Transceiver_Send_Data(transceiver, 0, TC_LOW);
     printf("Reset\r\n");

@@ -35,11 +35,13 @@ int main(void) {
     int fd2 = ip_Mem_Map(RECEIVER_BASE_ADDR, &receiverPointer, IP_SIZE(RECEIVER_BASE_ADDR, RECEIVER_HIGH_ADDR));
 
     volatile uint32_t *transmitterValue = transmitterPointer;
+    volatile uint32_t *transmitterNewDataSet = (transmitterPointer + sizeof(uint32_t));
+//    volatile uint32_t *transmitterNewDataSet = (transmitterPointer + 1);
     volatile uint32_t *receiverValue = receiverPointer;
 
-    *transmitterValue = 7u;
-
-
+    *transmitterValue = 7u;         // Set the value to be serialized
+    *transmitterNewDataSet = 1u;    // Set to one to specify new data available
+    usleep(1000);
     printf("Value read : %x\n", *receiverValue);
 
     ip_Mem_Unmap(fd, transmitterPointer, IP_SIZE(TRANSMITTER_BASE_ADDR, TRANSMITTER_HIGH_ADDR));
