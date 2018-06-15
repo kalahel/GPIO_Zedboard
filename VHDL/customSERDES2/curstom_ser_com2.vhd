@@ -34,18 +34,18 @@ use IEEE.STD_LOGIC_1164.ALL;
 
 entity curstom_ser_com_2 is
     Port ( new_data_available : in STD_LOGIC;
-       main_clk     : in STD_LOGIC;
-       ser_ena      : out STD_LOGIC := '0';
-       des_ena      : out STD_LOGIC;
-       error_flag   : out STD_LOGIC := '0';
-       rst          : in STD_LOGIC;
-       ser_finished : in STD_LOGIC;
-       des_finished : in STD_LOGIC
+       main_clk         : in STD_LOGIC;
+       ser_ena          : out STD_LOGIC := '0';
+       des_ena          : out STD_LOGIC;
+       error_flag       : out STD_LOGIC := '0';
+       rst              : in STD_LOGIC;
+       ser_finished     : in STD_LOGIC;
+       des_finished     : in STD_LOGIC;
+       sercom_finished  : out STD_LOGIC
        );
 end curstom_ser_com_2;
 
 architecture Behavioral of curstom_ser_com_2 is
--- TODO check if cleaning state is really necessary
 type state is (idle, start, working, waiting_for_ser, waiting_for_des, cleaning);
 signal current_state, futur_state : state;
 begin
@@ -87,9 +87,10 @@ memorisation : process(main_clk, rst)
 begin
     if rst = '1' then
         current_state <= idle;
-    end if;
-    if rising_edge(main_clk) then
-        current_state <= futur_state;
+    else
+        if rising_edge(main_clk) then
+            current_state <= futur_state;
+        end if;
     end if;
 end process;
 
@@ -98,33 +99,41 @@ generation : process(current_state)
 begin
     case current_state is
         when idle =>
-            ser_ena     <= '0';
-            des_ena     <= '0';
-            error_flag  <= '0';
+            ser_ena         <= '0';
+            des_ena         <= '0';
+            error_flag      <= '0';
+            sercom_finished <= '0';
 
         when start =>
             ser_ena     <= '0';
             des_ena     <= '1';
             error_flag  <= '0';
+            sercom_finished <= '0';
 
         when working =>
             ser_ena     <= '1';
             des_ena     <= '0';
             error_flag  <= '0';
+            sercom_finished <= '0';
 
         when waiting_for_ser =>
             ser_ena     <= '0';
             des_ena     <= '0';
             error_flag  <= '0';
+            sercom_finished <= '0';
 
         when waiting_for_des =>
             ser_ena     <= '0';
             des_ena     <= '0';
             error_flag  <= '0';
+            sercom_finished <= '0';
+
         when cleaning =>
             ser_ena     <= '0';
             des_ena     <= '0';
             error_flag  <= '0';
+            sercom_finished <= '1';
+
     end case;
 end process;
 
